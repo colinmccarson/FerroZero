@@ -49,41 +49,36 @@ fn move_left(source: u64) -> u64 {
 
 
 #[repr(usize)]  // guarantees discriminant values start from 0
-pub enum ChesspieceType {
-    WhiteRooks,
-    WhiteKnights,
-    WhiteBishops,
-    WhiteQueens,
-    WhiteKing,
-    WhitePawns,
-    BlackRooks,
-    BlackKnights,
-    BlackBishops,
-    BlackQueens,
-    BlackKing,
-    BlackPawns,
+pub enum ChesspieceOffset {
+    Rooks,
+    Knights,
+    Bishops,
+    Queens,
+    King,
+    Pawns,
 }
 
-impl ChesspieceType {
+
+impl ChesspieceOffset {
     #[inline]
     pub fn index(self) -> usize {
         self as usize
     }
 
-    pub const ALL: [ChesspieceType; 12] = [
-        ChesspieceType::WhiteRooks,
-        ChesspieceType::WhiteKnights,
-        ChesspieceType::WhiteBishops,
-        ChesspieceType::WhiteQueens,
-        ChesspieceType::WhiteKing,
-        ChesspieceType::WhitePawns,
-        ChesspieceType::BlackRooks,
-        ChesspieceType::BlackKnights,
-        ChesspieceType::BlackBishops,
-        ChesspieceType::BlackQueens,
-        ChesspieceType::BlackKing,
-        ChesspieceType::BlackPawns,
+    pub const ALL: [ChesspieceOffset; 6] = [
+        ChesspieceOffset::Rooks,
+        ChesspieceOffset::Knights,
+        ChesspieceOffset::Bishops,
+        ChesspieceOffset::Queens,
+        ChesspieceOffset::King,
+        ChesspieceOffset::Pawns,
     ];
+}
+
+
+pub enum ChessColor {
+    White = 0,
+    Black = 6,
 }
 
 
@@ -103,12 +98,12 @@ impl Chessboard {
     }
 
     #[inline]
-    pub fn get(&self, piece: ChesspieceType) -> u64 {
+    pub fn get(&self, piece: ChesspieceOffset) -> u64 {
         self.pieces[piece.index()]
     }
 
     #[inline]
-    pub fn get_mut(&mut self, piece: ChesspieceType) -> &mut u64 {
+    pub fn get_mut(&mut self, piece: ChesspieceOffset) -> &mut u64 {
         &mut self.pieces[piece.index()]
     }
 }
