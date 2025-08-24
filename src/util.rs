@@ -3,7 +3,7 @@ pub fn print_u64_as_8x8_bit_string(n: u64) {
 
     for (i, c) in binary_string.chars().enumerate() {
         print!("{}", c);
-        if (i + 1) % 8 == 0 { 
+        if (i + 1) % 8 == 0 {
             print!("\n");
         }
         if (i + 1) % 64 == 0 {
@@ -11,7 +11,6 @@ pub fn print_u64_as_8x8_bit_string(n: u64) {
         }
     }
 }
-
 
 pub fn get_rank_index(mv: u64) -> Option<u64> {
     for i in 0u64..8 {
@@ -30,7 +29,6 @@ pub fn get_file_index(mv: u64) -> Option<u64> {
     }
     return None;
 }
-
 
 pub fn collect_coordinates(mv_set: u64) -> Vec<(u64, u64)> {
     let mut v: Vec<(u64, u64)> = Vec::new();

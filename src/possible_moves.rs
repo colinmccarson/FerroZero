@@ -1,6 +1,5 @@
 use crate::chessboard;
 
-
 pub const ROOK_MOVES: [u64; 64] = rook_moves();
 
 pub const KNIGHT_MOVES: [u64; 64] = knight_moves();
@@ -78,7 +77,8 @@ const fn white_pawn_single(sq: u64) -> u64 {
     let upleft = chessboard::move_left(up, 1);
     let upright = chessboard::move_right(up, 1);
     let usual = up | upleft | upright;
-    if sq & 0xFF00u64 > 0 {  // first move
+    if sq & 0xFF00u64 > 0 {
+        // first move
         return usual | chessboard::increment_rank(up, 1);
     }
     usual
@@ -89,12 +89,12 @@ const fn black_pawn_single(sq: u64) -> u64 {
     let downleft = chessboard::move_left(down, 1);
     let downright = chessboard::move_right(down, 1);
     let usual = down | downleft | downright;
-    if sq & 0x00FF_0000_0000_0000u64 > 0 { // first move
+    if sq & 0x00FF_0000_0000_0000u64 > 0 {
+        // first move
         return usual | chessboard::decrement_rank(down, 1);
     }
     usual
 }
-
 
 macro_rules! make_table {
     ($name:ident, $gen:ident) => {
@@ -110,20 +110,18 @@ macro_rules! make_table {
     };
 }
 
-
-make_table!(rook_moves,   rook_single);
+make_table!(rook_moves, rook_single);
 make_table!(bishop_moves, bishop_single);
-make_table!(queen_moves,  queen_single);
+make_table!(queen_moves, queen_single);
 make_table!(knight_moves, knight_single);
-make_table!(king_moves,   king_single);
+make_table!(king_moves, king_single);
 make_table!(white_pawn_moves, white_pawn_single);
 make_table!(black_pawn_moves, black_pawn_single);
 
-
 #[cfg(test)]
 mod tests {
-    use crate::util::*;
     use super::*;
+    use crate::util::*;
 
     #[test]
     fn test_rook_moves() {
@@ -180,10 +178,15 @@ mod tests {
                 (yp, xm),
                 (yp, x0),
                 (yp, xp),
-            ].into_iter().filter(|(y, x): &(u64, u64)| { (*y, *x) != (y0, x0) }).collect();
+            ]
+            .into_iter()
+            .filter(|(y, x): &(u64, u64)| (*y, *x) != (y0, x0))
+            .collect();
 
-            let correct_moves_set: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::from_iter(king_moves);
-            let mv_set_coords: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::from_iter(mv_vec_coords);
+            let correct_moves_set: std::collections::HashSet<(u64, u64)> =
+                std::collections::HashSet::from_iter(king_moves);
+            let mv_set_coords: std::collections::HashSet<(u64, u64)> =
+                std::collections::HashSet::from_iter(mv_vec_coords);
             assert_eq!(mv_set_coords, correct_moves_set);
         }
     }
@@ -193,22 +196,26 @@ mod tests {
         for (i, mv_set) in WHITE_PAWN_MOVES.clone().into_iter().enumerate() {
             let pawn_rank = get_rank_index(1u64 << i).unwrap();
             let pawn_file = get_file_index(1u64 << i).unwrap();
-            let actual_moves: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::from_iter(
-                collect_coordinates(mv_set)
-            );
+            let actual_moves: std::collections::HashSet<(u64, u64)> =
+                std::collections::HashSet::from_iter(collect_coordinates(mv_set));
             if pawn_rank == 1 {
-                let expected_moves: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::from_iter(
-                    vec![(2, pawn_file), (2, pawn_file.saturating_sub(1)), (2, std::cmp::min(pawn_file + 1, 7)), (3, pawn_file)]
-                );
+                let expected_moves: std::collections::HashSet<(u64, u64)> =
+                    std::collections::HashSet::from_iter(vec![
+                        (2, pawn_file),
+                        (2, pawn_file.saturating_sub(1)),
+                        (2, std::cmp::min(pawn_file + 1, 7)),
+                        (3, pawn_file),
+                    ]);
                 assert_eq!(expected_moves, actual_moves);
-            }
-            else if pawn_rank < 7 {
-                let expected_moves: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::from_iter(
-                    vec![(pawn_rank + 1, pawn_file.saturating_sub(1)), (pawn_rank + 1, pawn_file), (pawn_rank + 1, std::cmp::min(pawn_file + 1, 7))]
-                );
+            } else if pawn_rank < 7 {
+                let expected_moves: std::collections::HashSet<(u64, u64)> =
+                    std::collections::HashSet::from_iter(vec![
+                        (pawn_rank + 1, pawn_file.saturating_sub(1)),
+                        (pawn_rank + 1, pawn_file),
+                        (pawn_rank + 1, std::cmp::min(pawn_file + 1, 7)),
+                    ]);
                 assert_eq!(expected_moves, actual_moves);
-            }
-            else {
+            } else {
                 assert_eq!(mv_set, 0u64);
             }
         }
