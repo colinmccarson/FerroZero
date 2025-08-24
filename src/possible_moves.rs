@@ -1,19 +1,19 @@
 use crate::chessboard;
 
 
-const ROOK_MOVES: [u64; 64] = rook_moves();
+pub const ROOK_MOVES: [u64; 64] = rook_moves();
 
-const KNIGHT_MOVES: [u64; 64] = knight_moves();
+pub const KNIGHT_MOVES: [u64; 64] = knight_moves();
 
-const BISHOP_MOVES: [u64; 64] = bishop_moves();
+pub const BISHOP_MOVES: [u64; 64] = bishop_moves();
 
-const QUEEN_MOVES: [u64; 64] = queen_moves();
+pub const QUEEN_MOVES: [u64; 64] = queen_moves();
 
-const KING_MOVES: [u64; 64] = king_moves();
+pub const KING_MOVES: [u64; 64] = king_moves();
 
-const WHITE_PAWN_MOVES: [u64; 64] = white_pawn_moves();
+pub const WHITE_PAWN_MOVES: [u64; 64] = white_pawn_moves();
 
-const BLACK_PAWN_MOVES: [u64; 64] = black_pawn_moves();
+pub const BLACK_PAWN_MOVES: [u64; 64] = black_pawn_moves();
 
 // ---------- Single-square generators (const) ----------
 

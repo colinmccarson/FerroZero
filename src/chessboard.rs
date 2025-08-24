@@ -1,4 +1,4 @@
-use crate::chess_attacks as chess_attacks;
+use crate::possible_moves as chess_attacks;
 
 const DEBRUIJN64: u64 = 0x03f79d71b4cb0a89;
 const RANK_8: u64 = 0xFF00_0000_0000_0000;
@@ -114,10 +114,89 @@ impl Chessboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::*;
     
     #[test]
     fn test_increment_rank() {
-        assert_eq!(increment_rank(2, 1), 0x00000200);
-        assert_eq!(decrement_rank(2, 3), 0);
+        for i in 0u64..64 {
+            let source: u64 = 1 << i;
+            let source_rank = get_rank_index(source).unwrap();
+            let source_file = get_file_index(source).unwrap();
+            for amount_increment in 1u64..8 {
+                let move_u64: u64 = increment_rank(1 << i, amount_increment);
+                if source_rank + amount_increment > 7 {
+                    assert_eq!(move_u64, 0u64);
+                }
+                else {
+                    let actual_move_rank = get_rank_index(move_u64).unwrap();
+                    let actual_move_file = get_file_index(move_u64).unwrap();
+                    assert_eq!(actual_move_file, source_file);
+                    assert_eq!(actual_move_rank, source_rank + amount_increment);
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_decrement_rank() {
+        for i in 0u64..64 {
+            let source: u64 = 1 << i;
+            let source_rank = get_rank_index(source).unwrap();
+            let source_file = get_file_index(source).unwrap();
+            for amount_decrement in 1u64..8 {
+                let move_u64: u64 = decrement_rank(1 << i, amount_decrement);
+                if amount_decrement > source_rank {
+                    assert_eq!(move_u64, 0u64);
+                }
+                else {
+                    let actual_move_rank = get_rank_index(move_u64).unwrap();
+                    let actual_move_file = get_file_index(move_u64).unwrap();
+                    assert_eq!(actual_move_file, source_file);
+                    assert_eq!(actual_move_rank, source_rank - amount_decrement);
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_move_left() {
+        for i in 0u64..64 {
+            let source: u64 = 1 << i;
+            let source_rank = get_rank_index(source).unwrap();
+            let source_file = get_file_index(source).unwrap();
+            for amount_left in 0u64..8 {
+                let move_u64: u64 = move_left(source, amount_left);
+                if amount_left > source_file {
+                    assert_eq!(move_u64, 0u64);
+                }
+                else {
+                    let actual_move_rank = get_rank_index(move_u64).unwrap();
+                    let actual_move_file = get_file_index(move_u64).unwrap();
+                    assert_eq!(actual_move_rank, source_rank);
+                    assert_eq!(actual_move_file, source_file - amount_left);
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_move_right() {
+        for i in 0u64..64 {
+            let source: u64 = 1 << i;
+            let source_rank = get_rank_index(source).unwrap();
+            let source_file = get_file_index(source).unwrap();
+            for amount_right in 0u64..8 {
+                let move_u64: u64 = move_right(source, amount_right);
+                if source_file + amount_right > 7 {
+                    assert_eq!(move_u64, 0u64);
+                }
+                else {
+                    let actual_move_rank = get_rank_index(move_u64).unwrap();
+                    let actual_move_file = get_file_index(move_u64).unwrap();
+                    assert_eq!(actual_move_rank, source_rank);
+                    assert_eq!(actual_move_file, source_file + amount_right);
+                }
+            }
+        }
     }
 }
