@@ -158,6 +158,23 @@ mod tests {
     }
 
     #[test]
+    fn test_knight_moves() {
+        for (i, mv_set) in KNIGHT_MOVES.clone().into_iter().enumerate() {
+            let mv: u64 = 1 << i;
+            let rank0 = get_rank_index(mv).unwrap() as i64;
+            let file0 = get_file_index(mv).unwrap() as i64;
+            for (rank, file) in collect_coordinates(mv_set) {
+                let rank = rank as i64;
+                let file = file as i64;
+                assert!(
+                    (((rank - rank0).abs() == 2) && ((file - file0).abs() == 1))
+                        || ((rank - rank0).abs() == 1) && ((file - file0).abs() == 2)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_king_moves() {
         for (i, mv_set) in KING_MOVES.clone().into_iter().enumerate() {
             let x0 = get_file_index(1u64 << i).unwrap();
