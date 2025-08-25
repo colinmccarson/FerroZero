@@ -163,6 +163,7 @@ mod tests {
             let mv: u64 = 1 << i;
             let rank0 = get_rank_index(mv).unwrap() as i64;
             let file0 = get_file_index(mv).unwrap() as i64;
+            assert!(2 <= mv_set.count_ones() && mv_set.count_ones() <= 8);
             for (rank, file) in collect_coordinates(mv_set) {
                 let rank = rank as i64;
                 let file = file as i64;
