@@ -80,7 +80,36 @@ impl Chessboard {
     Board convention is: rank = floor(log8(loc)), file = log2(loc - floor(loc8(loc)))
     **/
     pub fn new() -> Chessboard {
-        Chessboard { pieces: [0; 12] }
+        let white_pawns = 0xFF00u64;
+        let white_rooks = 0x81u64;
+        let white_knights = 0x42u64;
+        let white_bishops = 0x24u64;
+        let white_queens = 0x8u64;
+        let white_king = 0x4u64;
+
+        let black_pawns = white_pawns << (8 * 5);
+        let black_rooks = white_rooks << (8 * 7);
+        let black_knights = white_knights << (8 * 7);
+        let black_bishops = white_bishops << (8 * 7);
+        let black_queens = white_queens << (8 * 7);
+        let black_king = white_king << (8 * 7);
+
+        Chessboard {
+            pieces: [
+                white_rooks,
+                white_knights,
+                white_bishops,
+                white_queens,
+                white_king,
+                white_pawns,
+                black_rooks,
+                black_knights,
+                black_bishops,
+                black_queens,
+                black_king,
+                black_pawns,
+            ],
+        }
     }
 
     #[inline]
