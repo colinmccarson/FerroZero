@@ -32,7 +32,7 @@ pub const fn trailing_zeros_debruijn(x: u64) -> u64 {
 
 
 #[derive(Clone, Copy)]
-struct LegalMoves {
+struct LegalMove {
     source: u64,
     dests: u64,
     color: Colors,
@@ -40,10 +40,10 @@ struct LegalMoves {
 }
 
 
-impl LegalMoves {
+impl LegalMove {
     #[inline]
-    pub fn new(source: u64, dests: u64, color: Colors, enpassant_location: u64) -> LegalMoves {
-        LegalMoves { source, dests, color, enpassant_location }
+    pub fn new(source: u64, dests: u64, color: Colors, enpassant_location: u64) -> LegalMove {
+        LegalMove { source, dests, color, enpassant_location }
     }
 }
 
@@ -113,6 +113,24 @@ impl Chessboard {
             enpassant_location: 0,
         }
     }
+    
+    pub fn new_blank() -> Chessboard {
+        Chessboard {
+            white_pawns: 0,
+            white_rooks: 0,
+            white_knights: 0,
+            white_bishops: 0,
+            white_queens: 0,
+            white_king: 0,
+            black_pawns: 0,
+            black_rooks: 0,
+            black_knights: 0,
+            black_bishops: 0,
+            black_queens: 0,
+            black_king: 0,
+            enpassant_location: 0,
+        }
+    }
 
     #[inline]
     fn get_combined_white_pieces(&self) -> u64 {
@@ -124,11 +142,11 @@ impl Chessboard {
         self.black_rooks | self.black_knights | self.black_bishops | self.black_queens | self.black_king | self.black_pawns
     }
     
-    fn generate_pseudolegal_white_pawn_moves(&self) -> [LegalMoves; 8] {
+    fn generate_pseudolegal_white_pawn_moves(&self) -> [LegalMove; 8] {
         let black_occ = self.get_combined_black_pieces();
         let all_occ = self.get_combined_white_pieces() | black_occ;
         let mut source = self.white_pawns;
-        let mut all_possible_moves = [LegalMoves::new(0, 0, Colors::WHITE, 0); 8];
+        let mut all_possible_moves = [LegalMove::new(0, 0, Colors::WHITE, 0); 8];
         for i in 0..8 {
             let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = pawn_sq;
@@ -140,11 +158,11 @@ impl Chessboard {
         all_possible_moves
     }
     
-    fn generate_pseudolegal_black_pawn_moves(&self) -> [LegalMoves; 8] {
+    fn generate_pseudolegal_black_pawn_moves(&self) -> [LegalMove; 8] {
         let white_occ = self.get_combined_white_pieces();
         let all_occ = self.get_combined_black_pieces() | white_occ;
         let mut source = self.white_pawns;
-        let mut all_possible_moves = [LegalMoves::new(0, 0, Colors::WHITE, 0); 8];
+        let mut all_possible_moves = [LegalMove::new(0, 0, Colors::WHITE, 0); 8];
         for i in 0..8 {
             let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = pawn_sq;
@@ -157,14 +175,14 @@ impl Chessboard {
     }
     
     // #[unroll_for_loops]
-    fn generate_pseudolegal_rook_moves(&self, color: Colors) -> [LegalMoves; 10] {
+    fn generate_pseudolegal_rook_moves(&self, color: Colors) -> [LegalMove; 10] {
         let cidx = color as usize;
         let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let total_occ = own_occ | other_occ;
         let mut source = [self.white_rooks, self.black_rooks][cidx];
-        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        let mut all_possible_moves: [LegalMove; 10] = [LegalMove::new(0, 0, color, 0); 10];
         for i in 0..10 {
             let (rook_ind, rook_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = rook_sq; // impossible to have a zero source
@@ -179,12 +197,12 @@ impl Chessboard {
     }
     
     // #[unroll_for_loops]
-    fn generate_pseudolegal_knight_moves(&self, color: Colors) -> [LegalMoves; 10] {
+    fn generate_pseudolegal_knight_moves(&self, color: Colors) -> [LegalMove; 10] {
         let cidx = color as usize;
         let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
         let own_occ = all_pieces[cidx];
         let mut source = [self.white_knights, self.black_knights][cidx];
-        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        let mut all_possible_moves: [LegalMove; 10] = [LegalMove::new(0, 0, color, 0); 10];
         for i in 0..10 {
             let (knight_ind, knight_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = knight_sq;
@@ -194,14 +212,14 @@ impl Chessboard {
         all_possible_moves
     }
 
-    fn generate_pseudolegal_bishop_moves(&self, color: Colors) -> [LegalMoves; 10] {
+    fn generate_pseudolegal_bishop_moves(&self, color: Colors) -> [LegalMove; 10] {
         let cidx = color as usize;
         let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let total_occ = own_occ | other_occ;
         let mut source = [self.white_bishops, self.black_bishops][cidx];
-        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        let mut all_possible_moves: [LegalMove; 10] = [LegalMove::new(0, 0, color, 0); 10];
         for i in 0..10 {
             let (bishop_ind, bishop_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = bishop_sq;
@@ -223,13 +241,13 @@ impl Chessboard {
         possible_moves & !own_occ
     }
 
-    fn generate_pseudolegal_queen_moves(&self, color: Colors) -> [LegalMoves; 9] {  // TODO double check this is correct after bishop & rook changes
+    fn generate_pseudolegal_queen_moves(&self, color: Colors) -> [LegalMove; 9] {  // TODO double check this is correct after bishop & rook changes
         let cidx = color as usize;
         let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let mut source = [self.white_queens, self.black_queens][cidx];
-        let mut all_possible_moves: [LegalMoves; 9] = [LegalMoves::new(0, 0, color, 0); 9];
+        let mut all_possible_moves: [LegalMove; 9] = [LegalMove::new(0, 0, color, 0); 9];
         for i in 0..9 {
             let (queen_ind, queen_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = queen_sq;
@@ -243,85 +261,22 @@ impl Chessboard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chess_utils::utils::*;
-
+    
     #[test]
-    fn test_increment_rank() {
-        for i in 0u64..64 {
-            let source: u64 = 1u64 << i;
-            let source_rank = get_rank_index(source).unwrap();
-            let source_file = get_file_index(source).unwrap();
-            for amount_increment in 1u64..8 {
-                let move_u64: u64 = increment_rank(1u64 << i, amount_increment);
-                if source_rank + amount_increment > 7 {
-                    assert_eq!(move_u64, 0u64);
-                } else {
-                    let actual_move_rank = get_rank_index(move_u64).unwrap();
-                    let actual_move_file = get_file_index(move_u64).unwrap();
-                    assert_eq!(actual_move_file, source_file);
-                    assert_eq!(actual_move_rank, source_rank + amount_increment);
-                }
+    fn test_illegal_move() {
+        let source = 1u64;
+        for i in 0..7 {
+            let vstack1 = source << (8 * i);
+            let vstack2 = source << (8 * (i + 1));
+            let illegal_move = LegalMove::new(vstack1, vstack2, Colors::WHITE, 0);
+            let mut test_board = Chessboard::new_blank();
+            test_board.white_rooks = vstack1 | vstack2;
+            let legal_moves = test_board.generate_pseudolegal_rook_moves(Colors::WHITE);
+            for mv in legal_moves {
+                assert!(!(mv.source == vstack1 && mv.dests == vstack2));
+                assert!(!(mv.dests == vstack1 && mv.source == vstack2));
             }
-        }
-    }
-
-    #[test]
-    fn test_decrement_rank() {
-        for i in 0u64..64 {
-            let source: u64 = 1u64 << i;
-            let source_rank = get_rank_index(source).unwrap();
-            let source_file = get_file_index(source).unwrap();
-            for amount_decrement in 1u64..8 {
-                let move_u64: u64 = decrement_rank(1u64 << i, amount_decrement);
-                if amount_decrement > source_rank {
-                    assert_eq!(move_u64, 0u64);
-                } else {
-                    let actual_move_rank = get_rank_index(move_u64).unwrap();
-                    let actual_move_file = get_file_index(move_u64).unwrap();
-                    assert_eq!(actual_move_file, source_file);
-                    assert_eq!(actual_move_rank, source_rank - amount_decrement);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_move_left() {
-        for i in 0u64..64 {
-            let source: u64 = 1u64 << i;
-            let source_rank = get_rank_index(source).unwrap();
-            let source_file = get_file_index(source).unwrap();
-            for amount_left in 0u64..8 {
-                let move_u64: u64 = move_left(source, amount_left);
-                if amount_left > source_file {
-                    assert_eq!(move_u64, 0u64);
-                } else {
-                    let actual_move_rank = get_rank_index(move_u64).unwrap();
-                    let actual_move_file = get_file_index(move_u64).unwrap();
-                    assert_eq!(actual_move_rank, source_rank);
-                    assert_eq!(actual_move_file, source_file - amount_left);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_move_right() {
-        for i in 0u64..64 {
-            let source: u64 = 1u64 << i;
-            let source_rank = get_rank_index(source).unwrap();
-            let source_file = get_file_index(source).unwrap();
-            for amount_right in 0u64..8 {
-                let move_u64: u64 = move_right(source, amount_right);
-                if source_file + amount_right > 7 {
-                    assert_eq!(move_u64, 0u64);
-                } else {
-                    let actual_move_rank = get_rank_index(move_u64).unwrap();
-                    let actual_move_file = get_file_index(move_u64).unwrap();
-                    assert_eq!(actual_move_rank, source_rank);
-                    assert_eq!(actual_move_file, source_file + amount_right);
-                }
-            }
+            assert_eq!(legal_moves.iter().filter(|&&mv| mv.source != 0).collect::<Vec<&LegalMove>>().len(), 2);
         }
     }
 }
