@@ -1,0 +1,7 @@
+[package]
+name = "gen_tables"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+chess_utils = { path = "../chess_utils"}

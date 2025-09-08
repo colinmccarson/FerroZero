@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chess_tables = { path = "chess_tables" }
+chess_utils = { path = "chess_utils" }
+gen_tables = {path = "gen_tables"}
+unroll = "0.1.5"
+
+[workspace]
+members = [
+    "chess_tables",
+    "chess_utils",
+    "gen_tables",
+]

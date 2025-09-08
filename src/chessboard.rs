@@ -1,8 +1,20 @@
-use crate::possible_moves as chess_attacks;
+use core::arch::x86_64::_pext_u64;
+
+use chess_tables;
+use chess_utils::consts::*;
+use chess_utils::shifts::*;
+use chess_utils::utils::*;
+use gen_tables::*;
+
+
+#[repr(usize)]
+#[derive(Clone, Copy)]
+pub enum Colors {
+    WHITE = 0usize,
+    BLACK = 1usize,
+}
 
 const DEBRUIJN64: u64 = 0x03f79d71b4cb0a89;
-const RANK_8: u64 = 0xFF00_0000_0000_0000;
-const RANK_1: u64 = 0x0000_0000_0000_00FF;
 const INDEX64: [u64; 64] = [
     0, 1, 48, 2, 57, 49, 28, 3, 61, 58, 50, 42, 38, 29, 17, 4, 62, 55, 59, 36, 53, 51, 43, 22, 45,
     39, 33, 30, 24, 18, 12, 5, 63, 47, 56, 27, 60, 41, 37, 16, 54, 35, 52, 21, 44, 32, 23, 11, 46,
@@ -18,61 +30,52 @@ pub const fn trailing_zeros_debruijn(x: u64) -> u64 {
     INDEX64[idx]
 }
 
-#[inline(always)]
-pub const fn increment_rank(source: u64, num_ranks: u64) -> u64 {
-    (!RANK_8 & source) << (num_ranks << 3)
+
+#[derive(Clone, Copy)]
+struct LegalMoves {
+    source: u64,
+    dests: u64,
+    color: Colors,
+    enpassant_location: u64,
 }
 
-#[inline(always)]
-pub const fn decrement_rank(source: u64, num_ranks: u64) -> u64 {
-    (!RANK_1 & source) >> (num_ranks << 3)
-}
 
-#[inline(always)]
-pub const fn move_right(source: u64, num_files: u64) -> u64 {
-    let row = 0xFFu64 << (((source.trailing_zeros() & 0x3F) >> 3) << 3);
-    (source >> num_files) & row
-}
-
-#[inline(always)]
-pub const fn move_left(source: u64, num_files: u64) -> u64 {
-    let row = 0xFFu64 << (((source.trailing_zeros() & 0x3F) >> 3) << 3);
-    (source << num_files) & row
-}
-
-#[repr(usize)] // guarantees discriminant values start from 0
-pub enum ChesspieceOffset {
-    Rooks,
-    Knights,
-    Bishops,
-    Queens,
-    King,
-    Pawns,
-}
-
-impl ChesspieceOffset {
+impl LegalMoves {
     #[inline]
-    pub fn index(self) -> usize {
-        self as usize
+    pub fn new(source: u64, dests: u64, color: Colors, enpassant_location: u64) -> LegalMoves {
+        LegalMoves { source, dests, color, enpassant_location }
     }
-
-    pub const ALL: [ChesspieceOffset; 6] = [
-        ChesspieceOffset::Rooks,
-        ChesspieceOffset::Knights,
-        ChesspieceOffset::Bishops,
-        ChesspieceOffset::Queens,
-        ChesspieceOffset::King,
-        ChesspieceOffset::Pawns,
-    ];
 }
 
-pub enum ChessColor {
-    White = 0,
-    Black = 6,
+
+#[inline]
+/// Take a source, which it will remove the next piece from (in lsb -> msb order)
+/// And returns a tuple (index: usize, piece_sq: u64)
+/// If source is zero, returns 0 for piece_sq, signaling that there are no further pieces.
+fn get_next_piece_as_u64_and_rm_from_source(source: &mut u64) -> (usize, u64) {
+    let piece_ind = source.trailing_zeros() as usize;
+    let is_not_zero = (piece_ind != 64) as u64;
+    let piece_ind = piece_ind * is_not_zero as usize;
+    let piece_sq = (1u64 << (piece_ind as u64 * is_not_zero)) * is_not_zero;
+    *source &= !piece_sq;
+    (piece_ind, piece_sq)
 }
+
 
 struct Chessboard {
-    pieces: [u64; 12],
+    white_pawns: u64,
+    white_rooks: u64,
+    white_knights: u64,
+    white_bishops: u64,
+    white_queens: u64,
+    white_king: u64,
+    black_pawns: u64,
+    black_rooks: u64,
+    black_knights: u64,
+    black_bishops: u64,
+    black_queens: u64,
+    black_king: u64,
+    enpassant_location: u64  // bitboard square where enpassant would happen
 }
 
 impl Chessboard {
@@ -95,47 +98,161 @@ impl Chessboard {
         let black_king = white_king << (8 * 7);
 
         Chessboard {
-            pieces: [
-                white_rooks,
-                white_knights,
-                white_bishops,
-                white_queens,
-                white_king,
-                white_pawns,
-                black_rooks,
-                black_knights,
-                black_bishops,
-                black_queens,
-                black_king,
-                black_pawns,
-            ],
+            white_pawns: white_pawns,
+            white_rooks: white_rooks,
+            white_knights: white_knights,
+            white_bishops: white_bishops,
+            white_queens: white_queens,
+            white_king: white_king,
+            black_pawns: black_pawns,
+            black_rooks: black_rooks,
+            black_knights: black_knights,
+            black_bishops: black_bishops,
+            black_queens: black_queens,
+            black_king: black_king,
+            enpassant_location: 0,
         }
     }
 
     #[inline]
-    pub fn get(&self, piece: ChesspieceOffset) -> u64 {
-        self.pieces[piece.index()]
+    fn get_combined_white_pieces(&self) -> u64 {
+        self.white_rooks | self.white_knights | self.white_bishops | self.white_queens | self.white_king | self.white_pawns
     }
 
     #[inline]
-    pub fn get_mut(&mut self, piece: ChesspieceOffset) -> &mut u64 {
-        &mut self.pieces[piece.index()]
+    fn get_combined_black_pieces(&self) -> u64 {
+        self.black_rooks | self.black_knights | self.black_bishops | self.black_queens | self.black_king | self.black_pawns
+    }
+    
+    fn generate_pseudolegal_white_pawn_moves(&self) -> [LegalMoves; 8] {
+        let black_occ = self.get_combined_black_pieces();
+        let all_occ = self.get_combined_white_pieces() | black_occ;
+        let mut source = self.white_pawns;
+        let mut all_possible_moves = [LegalMoves::new(0, 0, Colors::WHITE, 0); 8];
+        for i in 0..8 {
+            let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = pawn_sq;
+            all_possible_moves[i].dests = (pawn_sq >> 8) | ((pawn_sq & RANK_2) >> 16);
+            all_possible_moves[i].dests &= !all_occ;
+            all_possible_moves[i].dests = (((pawn_sq << 7) & !FILE_A) | ((pawn_sq << 9) & !FILE_H)) & (black_occ | self.enpassant_location);
+            all_possible_moves[i].enpassant_location = self.enpassant_location;
+        }
+        all_possible_moves
+    }
+    
+    fn generate_pseudolegal_black_pawn_moves(&self) -> [LegalMoves; 8] {
+        let white_occ = self.get_combined_white_pieces();
+        let all_occ = self.get_combined_black_pieces() | white_occ;
+        let mut source = self.white_pawns;
+        let mut all_possible_moves = [LegalMoves::new(0, 0, Colors::WHITE, 0); 8];
+        for i in 0..8 {
+            let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = pawn_sq;
+            all_possible_moves[i].dests = (pawn_sq >> 8) | ((pawn_sq & RANK_7) >> 16);
+            all_possible_moves[i].dests &= !all_occ;
+            all_possible_moves[i].dests = (((pawn_sq >> 7) & !FILE_H) | ((pawn_sq >> 9) & !FILE_A)) & (white_occ | self.enpassant_location);
+            all_possible_moves[i].enpassant_location = self.enpassant_location;
+        }
+        all_possible_moves
+    }
+    
+    // #[unroll_for_loops]
+    fn generate_pseudolegal_rook_moves(&self, color: Colors) -> [LegalMoves; 10] {
+        let cidx = color as usize;
+        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let own_occ = all_pieces[cidx];
+        let other_occ = all_pieces[(cidx + 1) % 2];
+        let total_occ = own_occ | other_occ;
+        let mut source = [self.white_rooks, self.black_rooks][cidx];
+        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        for i in 0..10 {
+            let (rook_ind, rook_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = rook_sq; // impossible to have a zero source
+            let mask = ROOK_MOVES_NO_RAY_ENDS[rook_ind];
+            let needs_pext = ((mask & total_occ) != 0) as usize; // TODO wrong; mask needs to be not including the ends of rays 
+            let pext = unsafe { _pext_u64(total_occ, mask) } as usize;
+            let result = [ROOK_MOVES[rook_ind], ROOK_PEXT_TABLE[rook_ind][pext]];
+            all_possible_moves[i].dests = result[needs_pext];
+            all_possible_moves[i].dests &= !own_occ;
+        }
+        all_possible_moves
+    }
+    
+    // #[unroll_for_loops]
+    fn generate_pseudolegal_knight_moves(&self, color: Colors) -> [LegalMoves; 10] {
+        let cidx = color as usize;
+        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let own_occ = all_pieces[cidx];
+        let mut source = [self.white_knights, self.black_knights][cidx];
+        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        for i in 0..10 {
+            let (knight_ind, knight_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = knight_sq;
+            all_possible_moves[i].dests = KNIGHT_MOVES[knight_ind];
+            all_possible_moves[i].dests &= !own_occ;
+        }
+        all_possible_moves
+    }
+
+    fn generate_pseudolegal_bishop_moves(&self, color: Colors) -> [LegalMoves; 10] {
+        let cidx = color as usize;
+        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let own_occ = all_pieces[cidx];
+        let other_occ = all_pieces[(cidx + 1) % 2];
+        let total_occ = own_occ | other_occ;
+        let mut source = [self.white_bishops, self.black_bishops][cidx];
+        let mut all_possible_moves: [LegalMoves; 10] = [LegalMoves::new(0, 0, color, 0); 10];
+        for i in 0..10 {
+            let (bishop_ind, bishop_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = bishop_sq;
+            let mask = BISHOP_MOVES[bishop_ind] & !BOARD_EDGES;
+            let needs_pext = ((mask & total_occ) != 0) as usize;
+            let pext = unsafe { _pext_u64(total_occ, mask) as usize};
+            let result = [BISHOP_MOVES[bishop_ind], BISHOP_PEXT_TABLE[bishop_ind][pext]];
+            all_possible_moves[i].dests = result[needs_pext];
+        }
+        all_possible_moves
+    }
+
+    fn generate_pseudolegal_king_moves(&self, color: Colors) -> u64 {
+        let cidx = color as usize;
+        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let own_occ = all_pieces[cidx];
+        let source = [self.white_king, self.black_king][cidx];
+        let possible_moves = KING_MOVES[source.trailing_zeros() as usize];
+        possible_moves & !own_occ
+    }
+
+    fn generate_pseudolegal_queen_moves(&self, color: Colors) -> [LegalMoves; 9] {  // TODO double check this is correct after bishop & rook changes
+        let cidx = color as usize;
+        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let own_occ = all_pieces[cidx];
+        let other_occ = all_pieces[(cidx + 1) % 2];
+        let mut source = [self.white_queens, self.black_queens][cidx];
+        let mut all_possible_moves: [LegalMoves; 9] = [LegalMoves::new(0, 0, color, 0); 9];
+        for i in 0..9 {
+            let (queen_ind, queen_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
+            all_possible_moves[i].source = queen_sq;
+            all_possible_moves[i].dests = chess_tables::queen_attack_single(queen_sq, own_occ | other_occ);
+        }
+        all_possible_moves
     }
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::*;
+    use chess_utils::utils::*;
 
     #[test]
     fn test_increment_rank() {
         for i in 0u64..64 {
-            let source: u64 = 1 << i;
+            let source: u64 = 1u64 << i;
             let source_rank = get_rank_index(source).unwrap();
             let source_file = get_file_index(source).unwrap();
             for amount_increment in 1u64..8 {
-                let move_u64: u64 = increment_rank(1 << i, amount_increment);
+                let move_u64: u64 = increment_rank(1u64 << i, amount_increment);
                 if source_rank + amount_increment > 7 {
                     assert_eq!(move_u64, 0u64);
                 } else {
@@ -151,11 +268,11 @@ mod tests {
     #[test]
     fn test_decrement_rank() {
         for i in 0u64..64 {
-            let source: u64 = 1 << i;
+            let source: u64 = 1u64 << i;
             let source_rank = get_rank_index(source).unwrap();
             let source_file = get_file_index(source).unwrap();
             for amount_decrement in 1u64..8 {
-                let move_u64: u64 = decrement_rank(1 << i, amount_decrement);
+                let move_u64: u64 = decrement_rank(1u64 << i, amount_decrement);
                 if amount_decrement > source_rank {
                     assert_eq!(move_u64, 0u64);
                 } else {
@@ -171,7 +288,7 @@ mod tests {
     #[test]
     fn test_move_left() {
         for i in 0u64..64 {
-            let source: u64 = 1 << i;
+            let source: u64 = 1u64 << i;
             let source_rank = get_rank_index(source).unwrap();
             let source_file = get_file_index(source).unwrap();
             for amount_left in 0u64..8 {
@@ -191,7 +308,7 @@ mod tests {
     #[test]
     fn test_move_right() {
         for i in 0u64..64 {
-            let source: u64 = 1 << i;
+            let source: u64 = 1u64 << i;
             let source_rank = get_rank_index(source).unwrap();
             let source_file = get_file_index(source).unwrap();
             for amount_right in 0u64..8 {

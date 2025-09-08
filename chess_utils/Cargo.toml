@@ -1,0 +1,11 @@
+[package]
+name = "chess_utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+unroll = "0.1.5"
+
+[lib]
+name = 'chess_utils'
+path = 'src/lib.rs'

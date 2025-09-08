@@ -1,0 +1,16 @@
+[package]
+name = "chess_tables"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+unroll = "0.1.5"
+chess_utils = { path = "../chess_utils" }
+gen_tables = { path = "../gen_tables"}
+
+[dev-dependencies]
+rand = "0.9.1"
+
+[lib]
+name = 'chess_tables'
+path = 'src/lib.rs'
