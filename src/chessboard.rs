@@ -333,7 +333,7 @@ mod tests {
             let source = 1u64 << i;
             let source_rank = get_rank_index(source).unwrap();
             let source_file = get_file_index(source).unwrap();
-            for i in 0..10 {  // TODO generate a random row, shift it around, assert that the row above / below source is not hit by any legal move; repeat for files
+            for i in 0..10 {
                 if source_rank < 6 {
                     let random_row: u64 = rng.random::<u64>() & RANK_1;
                     let random_row = (random_row << (8 * (source_rank + 1))) & !source;
@@ -343,7 +343,7 @@ mod tests {
                     }
                 }
                 if source_file < 6 {
-                    let random_file = rng.random::<u64>() & FILE_A;  // TODO a utility for moving things over file-wise
+                    let random_file = rng.random::<u64>() & FILE_A;
                     let random_file = shift_safe_files(random_file, source_file as i32) & !source;
                     let file_right = shift_safe_files(random_file, 1);
                     if random_file > 0 {
