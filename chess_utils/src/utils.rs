@@ -1,6 +1,9 @@
 #[allow(long_running_const_eval)]
 use unroll::unroll_for_loops;
-use crate::shifts::move_source;
+
+use crate::consts;
+use crate::shifts;
+
 
 pub fn print_u64_as_8x8_bit_string(n: u64) {
     let binary_string = format!("{:064b}", n);
@@ -189,7 +192,7 @@ pub fn attack_in_dir(sq: u64, occ: u64, vertical: i32, horizontal: i32) -> u64 {
     let mut k = 1i32;
     let mut attack = 0u64;
     while in_bounds(rank + k * vertical, file + k * horizontal) && (attack & occ == 0) {
-        attack |= move_source(sq, k * vertical, k * horizontal);
+        attack |= shifts::move_source(sq, k * vertical, k * horizontal);
         k += 1;
     }
     attack
@@ -209,4 +212,17 @@ pub fn brute_force_bishop_attack(sq: u64, occ: u64) -> u64 {
     let ray_sw = attack_in_dir(sq, occ, -1, -1);
 
     ray_nw | ray_ne | ray_se | ray_sw
+}
+
+
+pub fn shift_safe_files(mut board: u64, k: i32) -> u64 {
+    for i in 0..k.abs() {
+        if k > 0 {
+            board = (board >> 1) & !consts::FILE_A;  // prevent rollover
+        }
+        else {
+            board = (board << 1) & !consts::FILE_H;
+        }
+    }
+    board
 }

@@ -15,3 +15,6 @@ members = [
     "chess_utils",
     "gen_tables",
 ]
+
+[dev-dependencies]
+rand = "0.9.2"

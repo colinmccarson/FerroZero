@@ -2,19 +2,6 @@ use std::arch::x86_64::_pext_u64;
 use gen_tables::*;
 
 
-pub fn queen_attack_single(sq: u64, occ: u64) -> u64 {
-    let sq_ind = sq.trailing_zeros() as usize;
-    let mask_bishop = BISHOP_MOVES[sq_ind];
-    let pext_result_bishop = unsafe { _pext_u64(occ, mask_bishop) } as usize;
-
-    let mask_rook = ROOK_MOVES[sq_ind];
-    let pext_result_rook = unsafe { _pext_u64(occ, mask_rook) } as usize;
-
-    BISHOP_PEXT_TABLE[sq_ind][pext_result_bishop] | ROOK_PEXT_TABLE[sq_ind][pext_result_rook]
-}
-
-
-
 #[cfg(test)]
 mod tests {
     use crate::*;

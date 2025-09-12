@@ -9,6 +9,7 @@ dependencies = [
  "chess_tables",
  "chess_utils",
  "gen_tables",
+ "rand",
  "unroll",
 ]
 
