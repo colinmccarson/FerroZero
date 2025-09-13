@@ -6,7 +6,6 @@ use chess_utils::shifts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
 
-
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub enum Colors {
@@ -30,7 +29,6 @@ pub const fn trailing_zeros_debruijn(x: u64) -> u64 {
     INDEX64[idx]
 }
 
-
 #[derive(Clone, Copy)]
 struct Move {
     source: u64,
@@ -39,11 +37,15 @@ struct Move {
     enpassant_location: u64,
 }
 
-
 impl Move {
     #[inline]
     pub fn new(source: u64, dests: u64, color: Colors, enpassant_location: u64) -> Move {
-        Move { source, dests, color, enpassant_location }
+        Move {
+            source,
+            dests,
+            color,
+            enpassant_location,
+        }
     }
 
     #[inline]
@@ -51,7 +53,6 @@ impl Move {
         self.source != 0
     }
 }
-
 
 #[inline]
 /// Take a source, which it will remove the next piece from (in lsb -> msb order)
@@ -66,7 +67,6 @@ fn get_next_piece_as_u64_and_rm_from_source(source: &mut u64) -> (usize, u64) {
     (piece_ind, piece_sq)
 }
 
-
 struct Chessboard {
     white_pawns: u64,
     white_rooks: u64,
@@ -80,7 +80,7 @@ struct Chessboard {
     black_bishops: u64,
     black_queens: u64,
     black_king: u64,
-    enpassant_location: u64  // bitboard square where enpassant would happen
+    enpassant_location: u64, // bitboard square where enpassant would happen
 }
 
 impl Chessboard {
@@ -118,7 +118,7 @@ impl Chessboard {
             enpassant_location: 0,
         }
     }
-    
+
     pub fn new_blank() -> Chessboard {
         Chessboard {
             white_pawns: 0,
@@ -139,14 +139,24 @@ impl Chessboard {
 
     #[inline]
     fn get_combined_white_pieces(&self) -> u64 {
-        self.white_rooks | self.white_knights | self.white_bishops | self.white_queens | self.white_king | self.white_pawns
+        self.white_rooks
+            | self.white_knights
+            | self.white_bishops
+            | self.white_queens
+            | self.white_king
+            | self.white_pawns
     }
 
     #[inline]
     fn get_combined_black_pieces(&self) -> u64 {
-        self.black_rooks | self.black_knights | self.black_bishops | self.black_queens | self.black_king | self.black_pawns
+        self.black_rooks
+            | self.black_knights
+            | self.black_bishops
+            | self.black_queens
+            | self.black_king
+            | self.black_pawns
     }
-    
+
     fn generate_pseudolegal_white_pawn_moves(&self) -> [Move; 8] {
         let black_occ = self.get_combined_black_pieces();
         let all_occ = self.get_combined_white_pieces() | black_occ;
@@ -158,12 +168,14 @@ impl Chessboard {
             all_possible_moves[i].dests = pawn_sq << 8;
             all_possible_moves[i].dests |= (((pawn_sq & RANK_2) << 8) & !all_occ) << 8;
             all_possible_moves[i].dests &= !all_occ;
-            all_possible_moves[i].dests |= (((pawn_sq << 7) & !FILE_A) | ((pawn_sq << 9) & !FILE_H)) & (black_occ | self.enpassant_location);
+            all_possible_moves[i].dests |= (((pawn_sq << 7) & !FILE_A)
+                | ((pawn_sq << 9) & !FILE_H))
+                & (black_occ | self.enpassant_location);
             all_possible_moves[i].enpassant_location = self.enpassant_location;
         }
         all_possible_moves
     }
-    
+
     fn generate_pseudolegal_black_pawn_moves(&self) -> [Move; 8] {
         let white_occ = self.get_combined_white_pieces();
         let all_occ = self.get_combined_black_pieces() | white_occ;
@@ -175,25 +187,30 @@ impl Chessboard {
             all_possible_moves[i].dests = pawn_sq >> 8;
             all_possible_moves[i].dests |= (((pawn_sq & RANK_7) >> 8) & !all_occ) >> 8;
             all_possible_moves[i].dests &= !all_occ;
-            all_possible_moves[i].dests |= (((pawn_sq >> 7) & !FILE_H) | ((pawn_sq >> 9) & !FILE_A)) & (white_occ | self.enpassant_location);
+            all_possible_moves[i].dests |= (((pawn_sq >> 7) & !FILE_H)
+                | ((pawn_sq >> 9) & !FILE_A))
+                & (white_occ | self.enpassant_location);
             all_possible_moves[i].enpassant_location = self.enpassant_location;
         }
         all_possible_moves
     }
-    
+
     #[inline]
     fn generate_pseudolegal_rook_move_for_sq(sq_ind: usize, total_occ: u64, own_occ: u64) -> u64 {
         let mask = ROOK_MOVES_NO_RAY_ENDS[sq_ind];
-        let needs_pext = ((mask & total_occ) != 0) as usize; // TODO wrong; mask needs to be not including the ends of rays 
+        let needs_pext = ((mask & total_occ) != 0) as usize; // TODO wrong; mask needs to be not including the ends of rays
         let pext = unsafe { _pext_u64(total_occ, mask) } as usize;
         let result = [ROOK_MOVES[sq_ind], ROOK_PEXT_TABLE[sq_ind][pext]];
         result[needs_pext] & !own_occ
     }
-    
+
     // #[unroll_for_loops]
     pub fn generate_pseudolegal_rook_moves(&self, color: Colors) -> [Move; 10] {
         let cidx = color as usize;
-        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let all_pieces = [
+            self.get_combined_white_pieces(),
+            self.get_combined_black_pieces(),
+        ];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let total_occ = own_occ | other_occ;
@@ -202,15 +219,19 @@ impl Chessboard {
         for i in 0..10 {
             let (rook_ind, rook_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = rook_sq; // impossible to have a zero source
-            all_possible_moves[i].dests = Chessboard::generate_pseudolegal_rook_move_for_sq(rook_ind, total_occ, own_occ);
+            all_possible_moves[i].dests =
+                Chessboard::generate_pseudolegal_rook_move_for_sq(rook_ind, total_occ, own_occ);
         }
         all_possible_moves
     }
-    
+
     // #[unroll_for_loops]
     pub fn generate_pseudolegal_knight_moves(&self, color: Colors) -> [Move; 10] {
         let cidx = color as usize;
-        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let all_pieces = [
+            self.get_combined_white_pieces(),
+            self.get_combined_black_pieces(),
+        ];
         let own_occ = all_pieces[cidx];
         let mut source = [self.white_knights, self.black_knights][cidx];
         let mut all_possible_moves: [Move; 10] = [Move::new(0, 0, color, 0); 10];
@@ -222,19 +243,22 @@ impl Chessboard {
         }
         all_possible_moves
     }
-    
+
     #[inline]
     fn generate_pseudolegal_bishop_move_for_sq(sq_ind: usize, total_occ: u64, own_occ: u64) -> u64 {
         let mask = BISHOP_MOVES[sq_ind] & !BOARD_EDGES;
         let needs_pext = ((mask & total_occ) != 0) as usize;
-        let pext = unsafe { _pext_u64(total_occ, mask) as usize};
+        let pext = unsafe { _pext_u64(total_occ, mask) as usize };
         let result = [BISHOP_MOVES[sq_ind], BISHOP_PEXT_TABLE[sq_ind][pext]];
         result[needs_pext] & !own_occ
     }
-    
+
     pub fn generate_pseudolegal_bishop_moves(&self, color: Colors) -> [Move; 10] {
         let cidx = color as usize;
-        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let all_pieces = [
+            self.get_combined_white_pieces(),
+            self.get_combined_black_pieces(),
+        ];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let total_occ = own_occ | other_occ;
@@ -243,14 +267,18 @@ impl Chessboard {
         for i in 0..10 {
             let (bishop_ind, bishop_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = bishop_sq;
-            all_possible_moves[i].dests = Chessboard::generate_pseudolegal_bishop_move_for_sq(bishop_ind, total_occ, own_occ);
+            all_possible_moves[i].dests =
+                Chessboard::generate_pseudolegal_bishop_move_for_sq(bishop_ind, total_occ, own_occ);
         }
         all_possible_moves
     }
 
     pub fn generate_pseudolegal_king_moves(&self, color: Colors) -> u64 {
         let cidx = color as usize;
-        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let all_pieces = [
+            self.get_combined_white_pieces(),
+            self.get_combined_black_pieces(),
+        ];
         let own_occ = all_pieces[cidx];
         let source = [self.white_king, self.black_king][cidx];
         let possible_moves = KING_MOVES[source.trailing_zeros() as usize];
@@ -259,7 +287,10 @@ impl Chessboard {
 
     pub fn generate_pseudolegal_queen_moves(&self, color: Colors) -> [Move; 9] {
         let cidx = color as usize;
-        let all_pieces = [self.get_combined_white_pieces(), self.get_combined_black_pieces()];
+        let all_pieces = [
+            self.get_combined_white_pieces(),
+            self.get_combined_black_pieces(),
+        ];
         let own_occ = all_pieces[cidx];
         let other_occ = all_pieces[(cidx + 1) % 2];
         let total_occ = own_occ | other_occ;
@@ -268,12 +299,15 @@ impl Chessboard {
         for i in 0..9 {
             let (queen_ind, queen_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].source = queen_sq;
-            all_possible_moves[i].dests = Chessboard::generate_pseudolegal_bishop_move_for_sq(queen_ind, total_occ, own_occ) | Chessboard::generate_pseudolegal_rook_move_for_sq(queen_ind, total_occ, own_occ);
+            all_possible_moves[i].dests =
+                Chessboard::generate_pseudolegal_bishop_move_for_sq(queen_ind, total_occ, own_occ)
+                    | Chessboard::generate_pseudolegal_rook_move_for_sq(
+                        queen_ind, total_occ, own_occ,
+                    );
         }
         all_possible_moves
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -288,9 +322,16 @@ mod tests {
             assert!(!(mv.source == source && mv.dests == dest));
             assert!(!(mv.dests == source && mv.source == dest));
         }
-        assert_eq!(legal_moves.iter().filter(|&&mv| mv.source != 0).collect::<Vec<&Move>>().len(), 2);
+        assert_eq!(
+            legal_moves
+                .iter()
+                .filter(|&&mv| mv.source != 0)
+                .collect::<Vec<&Move>>()
+                .len(),
+            2
+        );
     }
-    
+
     #[test]
     fn test_simple_illegal_rook_move() {
         for i in 0usize..64 {
@@ -327,7 +368,7 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_rook_blockers_move() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(42u64);
@@ -355,11 +396,11 @@ mod tests {
             }
         }
     }
-    
+
     fn mask_rect_excl_sq(sq: u64) -> (u64, u64, u64, u64) {
         let sq_file = get_file_index(sq).unwrap();
         let sq_rank = get_rank_index(sq).unwrap();
-        
+
         let mut nw_block = 0u64;
         let mut ne_block = 0u64;
         let mut se_block = 0u64;
@@ -368,14 +409,19 @@ mod tests {
             let sq = 1u64 << i;
             let rank = get_rank_index(sq).unwrap();
             let file = get_file_index(sq).unwrap();
-            if rank > sq_rank && file < sq_file { nw_block |= sq; }
-            else if rank > sq_rank && file > sq_file { ne_block |= sq; }
-            else if rank < sq_rank && file < sq_file { sw_block |= sq; }
-            else if rank < sq_rank && file > sq_file { se_block |= sq; }
+            if rank > sq_rank && file < sq_file {
+                nw_block |= sq;
+            } else if rank > sq_rank && file > sq_file {
+                ne_block |= sq;
+            } else if rank < sq_rank && file < sq_file {
+                sw_block |= sq;
+            } else if rank < sq_rank && file > sq_file {
+                se_block |= sq;
+            }
         }
         (nw_block, ne_block, se_block, sw_block)
     }
-    
+
     fn get_closest_to_sq(board: u64, sq: u64) -> Option<u64> {
         let sq_rank = get_rank_index(sq).unwrap() as i32;
         let sq_file = get_file_index(sq).unwrap() as i32;
@@ -386,14 +432,22 @@ mod tests {
             let ranki = rank as i32;
             let filei = file as i32;
             let dist = (ranki - sq_rank).pow(2) + (filei - sq_file).pow(2);
-            if dist < least_dist { closest_sq = map_rank_and_file_to_sq(rank, file); least_dist = dist;}
+            if dist < least_dist {
+                closest_sq = map_rank_and_file_to_sq(rank, file);
+                least_dist = dist;
+            }
         }
-        if closest_sq != 0 { Some(closest_sq) }
-        else { None }
+        if closest_sq != 0 {
+            Some(closest_sq)
+        } else {
+            None
+        }
     }
-    
+
     fn assert_closest_bounds_ray(sq: u64, ray: u64) {
-        if ray == 0 { return; }
+        if ray == 0 {
+            return;
+        }
         let closest = get_closest_to_sq(ray, sq);
         match closest {
             Some(closest_sq) => {
@@ -436,7 +490,7 @@ mod tests {
         }
     }
 
-    #[test]  // GPT generated this test
+    #[test] // GPT generated this test
     fn test_queen_manual_example() {
         let mut board = Chessboard::new_blank();
         // Place a white queen on d4 (rank 3, file 3 → bit index 27)
@@ -446,7 +500,7 @@ mod tests {
         // Put pawns to block: one on d6, one on f4, one on b2
         board.black_pawns = (1u64 << (5 * 8 + 3))   // d6
             | (1u64 << (3 * 8 + 5))   // f4
-            | (1u64 << (1 * 8 + 1));  // b2
+            | (1u64 << (1 * 8 + 1)); // b2
 
         let moves = board.generate_pseudolegal_queen_moves(Colors::WHITE);
 
@@ -526,17 +580,17 @@ mod tests {
         assert_eq!(moves.iter().filter(|x| x.source == pawn).count(), 1);
         assert_eq!(moves.iter().filter(|x| x.source != 0).count(), 1);
     }
-    
+
     #[test]
     fn test_white_pawn_en_passant() {
         let mut board = Chessboard::new_blank();
-        
+
         let pawn = 1u64 << (5 * 8 + 3);
         let enpassant_location = 1u64 << (6 * 8 + 4);
         board.white_pawns = pawn;
         board.enpassant_location = enpassant_location;
         board.black_pawns = 1u64 << (5 * 8 + 4);
-        
+
         let moves = board.generate_pseudolegal_white_pawn_moves();
         let mv = moves.iter().find(|m| m.source == pawn).unwrap();
         assert_eq!(mv.dests, enpassant_location | (pawn << 8));
@@ -546,7 +600,7 @@ mod tests {
     fn test_black_pawn_en_passant() {
         let mut board = Chessboard::new_blank();
 
-        let pawn = 1u64 << (4 * 8 + 3);  // pawn on e4
+        let pawn = 1u64 << (4 * 8 + 3); // pawn on e4
         let enpassant_location = 1u64 << (3 * 8 + 4); // d3
         board.black_pawns = pawn;
         board.enpassant_location = enpassant_location;
@@ -556,18 +610,18 @@ mod tests {
         let mv = moves.iter().find(|m| m.source == pawn).unwrap();
         assert_eq!(mv.dests, enpassant_location | (pawn >> 8));
     }
-    
+
     #[test]
     fn test_pawn_sequence() {
         let mut board = Chessboard::new_blank();
-        
+
         let first_pawn = map_rank_and_file_to_sq(1, 2);
         let second_pawn = map_rank_and_file_to_sq(1, 3);
         let third_pawn = map_rank_and_file_to_sq(2, 4);
         let fourth_pawn = map_rank_and_file_to_sq(1, 5);
         let fifth_pawn = map_rank_and_file_to_sq(2, 6);
-        
-        let knight = map_rank_and_file_to_sq(2, 1);  // this was a knight on the board i made on lichess
+
+        let knight = map_rank_and_file_to_sq(2, 1); // this was a knight on the board i made on lichess
         let take2 = map_rank_and_file_to_sq(2, 2);
         let take3 = map_rank_and_file_to_sq(2, 3);
         let take4 = map_rank_and_file_to_sq(3, 6);
@@ -579,21 +633,17 @@ mod tests {
         for mv in moves {
             if mv.source == first_pawn {
                 assert_eq!(mv.dests, knight | take3);
-            }
-            else if mv.source == second_pawn {
+            } else if mv.source == second_pawn {
                 assert_eq!(mv.dests, take2);
-            }
-            else if mv.source == third_pawn {
+            } else if mv.source == third_pawn {
                 assert_eq!(mv.dests, third_pawn << 8);
-            }
-            else if mv.source == fourth_pawn {
+            } else if mv.source == fourth_pawn {
                 assert_eq!(mv.dests, (fourth_pawn << 8) | (fourth_pawn << 16));
-            }
-            else if mv.source == fifth_pawn {
+            } else if mv.source == fifth_pawn {
                 assert_eq!(mv.dests, 0);
             }
         }
-        
+
         let take1 = knight;
         let mut nxt_board = Chessboard::new_blank();
         nxt_board.black_pawns = take1 | take2 | take3 | take4;
@@ -605,14 +655,11 @@ mod tests {
         for mv in moves {
             if mv.source == take1 {
                 assert_eq!(mv.dests, map_rank_and_file_to_sq(1, 1) | first_pawn);
-            }
-            else if mv.source == take2 {
+            } else if mv.source == take2 {
                 assert_eq!(mv.dests, second_pawn);
-            }
-            else if mv.source == take3 {
+            } else if mv.source == take3 {
                 assert_eq!(mv.dests, first_pawn);
-            }
-            else if mv.source == take4 {
+            } else if mv.source == take4 {
                 assert_eq!(mv.dests, en_passant_location);
             }
         }
@@ -646,55 +693,63 @@ mod tests {
         assert!(king_moves & map_rank_and_file_to_sq(1, 5) != 0);
     }
 
-
     #[test] // GPT generated, manually corrected
     fn test_complicated_position() {
         let mut board = Chessboard::new_blank();
 
         // White pieces
-        board.white_king    = map_rank_and_file_to_sq(0, 4); // e1
-        board.white_queens  = map_rank_and_file_to_sq(0, 3); // d1
-        board.white_rooks   = map_rank_and_file_to_sq(0, 0)  // a1
+        board.white_king = map_rank_and_file_to_sq(0, 4); // e1
+        board.white_queens = map_rank_and_file_to_sq(0, 3); // d1
+        board.white_rooks = map_rank_and_file_to_sq(0, 0)  // a1
             | map_rank_and_file_to_sq(0, 7); // h1
         board.white_bishops = map_rank_and_file_to_sq(3, 2); // c4
         board.white_knights = map_rank_and_file_to_sq(2, 5); // f3
-        board.white_pawns   = map_rank_and_file_to_sq(1, 4)  // e2
+        board.white_pawns = map_rank_and_file_to_sq(1, 4)  // e2
             | map_rank_and_file_to_sq(1, 3)  // d2
             | map_rank_and_file_to_sq(1, 2); // c2
 
         // Black pieces
-        board.black_king    = map_rank_and_file_to_sq(7, 4); // e8
-        board.black_queens  = map_rank_and_file_to_sq(7, 3); // d8
-        board.black_rooks   = map_rank_and_file_to_sq(7, 0)  // a8
+        board.black_king = map_rank_and_file_to_sq(7, 4); // e8
+        board.black_queens = map_rank_and_file_to_sq(7, 3); // d8
+        board.black_rooks = map_rank_and_file_to_sq(7, 0)  // a8
             | map_rank_and_file_to_sq(7, 7); // h8
         board.black_bishops = map_rank_and_file_to_sq(4, 2); // c5
         board.black_knights = map_rank_and_file_to_sq(5, 5); // f6
-        board.black_pawns   = map_rank_and_file_to_sq(6, 4)  // e7
+        board.black_pawns = map_rank_and_file_to_sq(6, 4)  // e7
             | map_rank_and_file_to_sq(6, 3)  // d7
             | map_rank_and_file_to_sq(6, 2); // c7
 
         // Generate moves
-        let white_rook_moves   = board.generate_pseudolegal_rook_moves(Colors::WHITE);
+        let white_rook_moves = board.generate_pseudolegal_rook_moves(Colors::WHITE);
         let white_bishop_moves = board.generate_pseudolegal_bishop_moves(Colors::WHITE);
         let white_knight_moves = board.generate_pseudolegal_knight_moves(Colors::WHITE);
-        let white_queen_moves  = board.generate_pseudolegal_queen_moves(Colors::WHITE);
-        let white_king_moves   = board.generate_pseudolegal_king_moves(Colors::WHITE);
+        let white_queen_moves = board.generate_pseudolegal_queen_moves(Colors::WHITE);
+        let white_king_moves = board.generate_pseudolegal_king_moves(Colors::WHITE);
 
         // White rook on a1: should move up to a7 and capture on a8
         let rook_a1 = map_rank_and_file_to_sq(0, 0);
-        let rook_move = white_rook_moves.iter().find(|m| m.source == rook_a1).unwrap();
+        let rook_move = white_rook_moves
+            .iter()
+            .find(|m| m.source == rook_a1)
+            .unwrap();
         assert!(rook_move.dests & map_rank_and_file_to_sq(6, 0) != 0); // a7 open
         assert!(rook_move.dests & map_rank_and_file_to_sq(7, 0) != 0); // a8 enemy rook capture allowed
 
         // White bishop on c4: should be blocked by black pawn on c7
         let bishop_c4 = map_rank_and_file_to_sq(3, 2);
-        let bishop_move = white_bishop_moves.iter().find(|m| m.source == bishop_c4).unwrap();
+        let bishop_move = white_bishop_moves
+            .iter()
+            .find(|m| m.source == bishop_c4)
+            .unwrap();
         assert!(bishop_move.dests & map_rank_and_file_to_sq(6, 2) == 0); // c7 blocked
         assert!(bishop_move.dests & map_rank_and_file_to_sq(5, 4) != 0); // e6 diagonal open
 
         // White knight on f3: should be able to jump to g5
         let knight_f3 = map_rank_and_file_to_sq(2, 5);
-        let knight_move = white_knight_moves.iter().find(|m| m.source == knight_f3).unwrap();
+        let knight_move = white_knight_moves
+            .iter()
+            .find(|m| m.source == knight_f3)
+            .unwrap();
         assert!(knight_move.dests & map_rank_and_file_to_sq(4, 6) != 0); // g5 valid
         assert!(knight_move.dests & map_rank_and_file_to_sq(4, 4) != 0); // e5 valid
 
@@ -708,9 +763,9 @@ mod tests {
 
         // White queen on d1: should see d-file open until d7
         let queen_d1 = map_rank_and_file_to_sq(0, 3);
-        assert_eq!(white_queen_moves[0].dests, map_rank_and_file_to_sq(0, 1) | map_rank_and_file_to_sq(0, 2));
+        assert_eq!(
+            white_queen_moves[0].dests,
+            map_rank_and_file_to_sq(0, 1) | map_rank_and_file_to_sq(0, 2)
+        );
     }
-
-
-
-    }
+}
