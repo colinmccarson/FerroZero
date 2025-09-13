@@ -226,3 +226,23 @@ pub fn shift_safe_files(mut board: u64, k: i32) -> u64 {
     }
     board
 }
+
+
+pub fn sq_dist(first: u64, second: u64) -> u64 {
+    let f_rank = get_rank_index(first).unwrap() as i64;
+    let f_file = get_file_index(first).unwrap() as i64;
+    let s_rank = get_rank_index(second).unwrap() as i64;
+    let s_file = get_file_index(second).unwrap() as i64;
+    ((f_rank - s_rank).pow(2) + (f_file - s_file).pow(2)) as u64
+}
+
+
+pub fn get_all_individual_sq(mut board: u64) -> Vec<u64> {
+    let mut ret: Vec<u64> = Vec::new();
+    while board > 0 {
+        let sq = 1u64 << board.trailing_zeros();
+        board &= !sq;
+        ret.push(sq);
+    }
+    ret
+}
