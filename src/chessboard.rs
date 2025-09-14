@@ -67,7 +67,7 @@ impl PossibleMoves {
     }
 
     #[inline]
-    pub fn is_legal(&self) -> bool {
+    pub fn exists(&self) -> bool {
         self.source != 0
     }
 }
@@ -510,7 +510,7 @@ mod tests {
         test_board.set_black_pawns(occluder | occluded);
         let mvs = test_board.generate_pseudolegal_rook_moves(Colors::WHITE);
         for mv in mvs {
-            if mv.is_legal() {
+            if mv.exists() {
                 assert_eq!(occluded & mv.dests, 0);
             }
         }
