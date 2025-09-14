@@ -444,12 +444,15 @@ impl Chessboard {
         let other_color = (mv.color as usize + 1) % 2;
 
         for pt in 0usize..6 {
-            let is_same_as_mv = (pt == mv.piece_type as usize) as u64;
-            let updated_sq = is_same_as_mv * mv.dest;
-            nxt_board.pieces[other_color][pt] &= !updated_sq;
+            nxt_board.pieces[other_color][pt] &= !mv.dest;  // for takes
         }
 
         nxt_board
+    }
+    
+    #[inline(always)]
+    pub fn lost(&self, color: Colors) -> bool {
+        self.pieces[color as usize][PieceType::KING as usize] == 0
     }
 }
 
