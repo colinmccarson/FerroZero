@@ -439,8 +439,8 @@ impl Chessboard {
         debug_assert!(mv.source.count_ones() == 1);
         debug_assert!(mv.dest.count_ones() == 1);
         let mut nxt_board = self.clone();
-        nxt_board.pieces[mv.piece_type as usize][mv.color as usize] &= !mv.source;
-        nxt_board.pieces[mv.piece_type as usize][mv.color as usize] |= mv.dest;
+        nxt_board.pieces[mv.color as usize][mv.piece_type as usize] &= !mv.source;
+        nxt_board.pieces[mv.color as usize][mv.piece_type as usize] |= mv.dest;
         let other_color = (mv.color as usize + 1) % 2;
 
         for pt in 0usize..6 {
@@ -449,7 +449,7 @@ impl Chessboard {
 
         nxt_board
     }
-    
+
     #[inline(always)]
     pub fn lost(&self, color: Colors) -> bool {
         self.pieces[color as usize][PieceType::KING as usize] == 0
@@ -814,7 +814,7 @@ mod tests {
         }
     }
 
-    #[test] // GPT generated
+    #[test] // GPT generated TODO and it sucks, clean this up.
     fn test_king_pseudolegal_moves() {
         let mut board = Chessboard::new_blank();
 
@@ -842,7 +842,7 @@ mod tests {
         assert!(king_moves & map_rank_and_file_to_sq(1, 5) != 0);
     }
 
-    #[test] // GPT generated, manually corrected
+    #[test] // GPT generated, manually corrected TODO and it sucks, clean this up.
     fn test_complicated_position() {
         let mut board = Chessboard::new_blank();
 
@@ -912,11 +912,7 @@ mod tests {
 
         // White king on e1: should only have f1 and f2
         let king_e1 = map_rank_and_file_to_sq(0, 4);
-        assert!(white_king_moves & map_rank_and_file_to_sq(0, 5) != 0); // f1
-        assert!(white_king_moves & map_rank_and_file_to_sq(1, 5) != 0); // f2
-        assert!(white_king_moves & map_rank_and_file_to_sq(0, 3) == 0); // d1 blocked by queen
-        assert!(white_king_moves & map_rank_and_file_to_sq(1, 4) == 0); // e2 blocked by pawn
-        assert!(white_king_moves & map_rank_and_file_to_sq(1, 3) == 0); // d2 blocked by pawn
+        assert_eq!(white_king_moves, map_rank_and_file_to_sq(0, 5) | map_rank_and_file_to_sq(1, 5));
 
         // White queen on d1: should see d-file open until d7
         let queen_d1 = map_rank_and_file_to_sq(0, 3);
@@ -924,5 +920,26 @@ mod tests {
             white_queen_moves[0].dests,
             map_rank_and_file_to_sq(0, 1) | map_rank_and_file_to_sq(0, 2)
         );
+    }
+
+    #[test]
+    fn test_basic_play_move_takes() {
+        let mut test_board = Chessboard::new_blank();
+        let black_knight = map_rank_and_file_to_sq(2, 1);
+        test_board.set_black_knights(black_knight);
+        let pawn = map_rank_and_file_to_sq(1, 3);
+        test_board.set_white_pawns(pawn);
+        let knight_moves = test_board.generate_pseudolegal_knight_moves(Colors::BLACK);
+        let takes_pawn = knight_moves.iter().find(|m| m.dests & pawn > 0).unwrap();
+        let takes_pawn_mv = Move {
+            source: takes_pawn.source,
+            dest: pawn & takes_pawn.dests,
+            piece_type: PieceType::KNIGHT,
+            color: Colors::BLACK,
+        };
+        let nxt_board = test_board.play_move(takes_pawn_mv);
+        assert_eq!(nxt_board.get_black_knights() & black_knight, 0);
+        assert_eq!(nxt_board.get_black_knights(), pawn);
+        assert_eq!(nxt_board.get_white_pawns(), 0);
     }
 }
