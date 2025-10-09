@@ -1,9 +1,10 @@
 use core::arch::x86_64::_pext_u64;
-use std::mem::MaybeUninit;
 use chess_tables;
 use chess_utils::consts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
+
+use crate::utils::*;
 
 
 #[repr(usize)]
@@ -52,19 +53,66 @@ pub enum PieceType {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-struct Move {
+pub struct Move {
     source: u64,
     dest: u64,
     piece_type: PieceType,
     color: Colors,
     enpassant_location: u64,
-}
+    rook_to: u64, // castling use only
+    king_to: u64, //castling use only
+    promotion: PieceType
+} // TODO compress into single u64
 
 
 impl Move {
     #[inline]
     pub fn new(source: u64, dest: u64, piece_type: PieceType, color: Colors, enpassant_location: u64) -> Move {
-        Move { source, dest, piece_type, color, enpassant_location }
+        Move { source, dest, piece_type, color, enpassant_location, rook_to: 0, king_to: 0 , promotion: PieceType::INVALID}
+    }
+
+    #[inline]
+    pub fn new_invalid() -> Move {
+        Move { source: 0, dest: 0, piece_type: PieceType::INVALID, color: Colors::WHITE, enpassant_location: 0, rook_to: 0, king_to: 0, promotion: PieceType::INVALID }
+    }
+
+    #[inline]
+    pub fn new_kingside_castle(color: Colors) -> Move {
+        let kingside_king_to = 0b00000010u64;
+        let kingside_rook_to = 0b00000100u64;
+        let king_to = [kingside_king_to, kingside_king_to << 56][color as usize];
+        let rook_to = [kingside_rook_to, kingside_rook_to << 56][color as usize];
+        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_location: 0, rook_to, king_to, promotion: PieceType::INVALID }
+    }
+
+    #[inline]
+    pub fn new_queenside_castle(color: Colors) -> Move {
+        let queenside_rook_to = 0b00010000u64;
+        let queenside_king_to = 0b00100000u64;
+        let king_to = [queenside_king_to, queenside_king_to << 56][color as usize];
+        let rook_to = [queenside_rook_to, queenside_rook_to << 56][color as usize];
+        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_location: 0, rook_to, king_to, promotion: PieceType::INVALID }
+    }
+
+    #[inline]
+    pub fn is_kingside_castle(&self) -> bool {
+        let kingside_king_to = 0b00000010u64;
+        let kingside_rook_to = 0b00000100u64;
+        (self.rook_to == kingside_rook_to || self.rook_to == (kingside_rook_to << 56))
+        && (self.king_to == kingside_king_to || self.king_to == (kingside_king_to << 56))
+    }
+
+    #[inline]
+    pub fn is_queenside_castle(&self) -> bool {
+        let queenside_rook_to = 0b00010000u64;
+        let queenside_king_to = 0b00100000u64;
+        (self.rook_to == queenside_rook_to || self.rook_to == (queenside_rook_to << 56))
+        && (self.king_to == queenside_king_to || self.king_to == (queenside_king_to << 56))
+    }
+    
+    #[inline]
+    pub fn is_castling(&self) -> bool {
+        self.is_kingside_castle() || self.is_queenside_castle()
     }
 }
 
@@ -76,7 +124,9 @@ struct PossibleMoves {
     color: Colors,
     enpassant_location: u64,
     piece_type: PieceType,
-}
+} // TODO can compress this a lot, probably into one u64 or u32, use the move index 0-64
+// TODO impl promotion, fix enpassant
+
 
 impl PossibleMoves {
     #[inline]
@@ -129,6 +179,8 @@ pub struct Chessboard {
     // TODO refactor this for [color, piece type] index
     pieces: [[u64; 6]; 2],
     enpassant_location: u64, // bitboard square where enpassant would happen
+    has_kingside_castling_rights: [bool; 2],
+    has_queenside_castling_rights: [bool; 2],
 }
 
 impl Chessboard {
@@ -170,6 +222,8 @@ impl Chessboard {
         Chessboard {
             pieces: [white, black],
             enpassant_location: 0,
+            has_kingside_castling_rights: [true, true],
+            has_queenside_castling_rights: [true, true],
         }
     }
 
@@ -177,6 +231,8 @@ impl Chessboard {
         Chessboard {
             pieces: [[0u64; 6]; 2],
             enpassant_location: 0,
+            has_kingside_castling_rights: [true, true],
+            has_queenside_castling_rights: [true, true],
         }
     }
 
@@ -200,6 +256,11 @@ impl Chessboard {
             | self.get_piece(color, PieceType::PAWN)
     }
 
+    #[inline]
+    fn get_full_pieces_mask(&self) -> u64 {
+        self.get_combined_pieces(Colors::WHITE) | self.get_combined_pieces(Colors::BLACK)
+    }
+
     fn generate_pseudolegal_white_pawn_moves(&self) -> [PossibleMoves; 8] {
         // TODO this is enough to justify a pregen table, will also allow removal of branch later that requires checking if the color is white or black, by indexing into the table with the color
         let black_occ = self.get_combined_pieces(Colors::BLACK);
@@ -221,7 +282,7 @@ impl Chessboard {
         all_possible_moves
     }
 
-    fn generate_pseudolegal_black_pawn_moves(&self) -> [PossibleMoves; 8] {
+    fn generate_pseudolegal_black_pawn_moves(&self) -> [PossibleMoves; 8] { // TODO handle promotions, fix en passant
         let white_occ = self.get_combined_pieces(Colors::WHITE);
         let all_occ = self.get_combined_pieces(Colors::BLACK) | white_occ;
         let mut source = self.get_piece(Colors::BLACK, PieceType::PAWN);
@@ -339,8 +400,9 @@ impl Chessboard {
     // TODO this could be slow
     #[inline(always)]
     pub fn play_move(&self, mv: Move) -> Chessboard {
-        debug_assert!(mv.source.count_ones() == 1);
-        debug_assert!(mv.dest.count_ones() == 1);
+        debug_assert!(mv.source.count_ones() == 1 || mv.is_queenside_castle() || mv.is_kingside_castle());
+        debug_assert!(mv.dest.count_ones() == 1 || mv.is_queenside_castle() || mv.is_kingside_castle());
+
         let mut nxt_board = self.clone();
         nxt_board.pieces[mv.color as usize][mv.piece_type as usize] &= !mv.source;
         nxt_board.pieces[mv.color as usize][mv.piece_type as usize] |= mv.dest;
@@ -349,6 +411,23 @@ impl Chessboard {
         for pt in 0usize..6 {
             nxt_board.pieces[other_color][pt] &= !mv.dest;  // for takes
         }
+
+        // for castling, the above does nothing. for not castling, the below does nothing.
+        let color_bool = mv.color == Colors::BLACK;
+        let cur_rooks = self.get_piece(mv.color, PieceType::ROOK);
+        let kingside_rook_from_to = branchless_select(color_bool, 0b00001001u64 ^ cur_rooks, (0b00000001u64 << 56) ^ cur_rooks);
+        let queenside_rook_from_to = branchless_select(color_bool, 0b10000000u64 ^ cur_rooks, (0b10000000u64 << 56) ^ cur_rooks);
+        
+        nxt_board.set_piece(mv.color, PieceType::KING, branchless_select(mv.is_castling(), self.get_piece(mv.color, PieceType::KING), mv.king_to));
+        nxt_board.set_piece(mv.color, PieceType::ROOK, branchless_select(
+            mv.is_queenside_castle(),
+            branchless_select(
+                mv.is_kingside_castle(),
+                self.get_piece(mv.color, PieceType::ROOK),
+                kingside_rook_from_to,
+            ),
+            queenside_rook_from_to,
+        ));
 
         nxt_board
     }
@@ -417,10 +496,6 @@ impl Chessboard {
         let mut every_move_leaves_king_in_check = true;
         for i in 0..num_legal_moves {
             every_move_leaves_king_in_check &= self.play_move(all_moves[i]).is_king_in_check(color);
-            if !self.play_move(all_moves[i]).is_king_in_check(color) {
-                dbg!(all_moves[i]);
-                print_u64_as_8x8_bit_string(all_moves[i].dest);
-            }
         }
         every_move_leaves_king_in_check
     }
@@ -428,9 +503,7 @@ impl Chessboard {
     pub fn is_checkmate(&self, color: Colors) -> bool {  // TODO tests
         // TODO this is another bloated operation that can be streamlined, probably
         let king_in_check = self.is_king_in_check(color);
-        dbg!(king_in_check);
         if king_in_check {
-            dbg!(self.all_moves_lead_to_check(color));
             return self.all_moves_lead_to_check(color);
         }
         false
@@ -444,7 +517,58 @@ impl Chessboard {
     }
     
     pub fn is_initialized(&self) -> bool {
-        self.generate_union_mask_for_color(Colors::WHITE) | self.generate_union_mask_for_color(Colors::BLACK) > 0
+        ((self.generate_union_mask_for_color(Colors::WHITE) | self.generate_union_mask_for_color(Colors::BLACK)) > 0) && ((self.get_piece(Colors::BLACK, PieceType::KING) | self.get_piece(Colors::WHITE, PieceType::KING)) > 0)
+    }
+
+    // TODO write a MoveArray / ChessboardArray impl
+    pub fn generate_next_legal_boards(&self, color: Colors) -> ([(Chessboard, Move); 256], usize) {
+        // TODO optimize
+        let (mvs, num_legal) = self.generate_all_moves(color);
+        let mut ret: [(Chessboard, Move); 256] = [(self.clone(), Move::new_invalid()); 256];
+        for i in 0..num_legal {
+            ret[i].0 = ret[i].0.play_move(mvs[i]);
+            ret[i].1 = mvs[i];
+        }
+        (ret, num_legal)
+    }
+    // TODO insufficient mating material draw condition
+    // TODO castling tests, play castling move
+
+    pub fn castle_kingside_move(&self, color: Colors) -> Move {
+        let may_castle = self.may_castle_kingside(color) as usize;
+        let kingside_bitrow = 0b00001001u64;
+        let kingside_dest = 0b00000110u64;
+        let src = [kingside_bitrow, kingside_bitrow << 56][color as usize];
+        let dst = [kingside_dest, kingside_dest << 56][color as usize];
+        [Move::new_invalid(), Move::new(src, dst, PieceType::KING, color, 0)][may_castle]
+    }
+
+    pub fn castle_queenside_move(&self, color: Colors) -> Move {
+        let may_castle = self.may_castle_queenside(color) as usize;
+        let queenside_bitrow = 0b10001000u64;
+        let queenside_dest = 0b00110000;
+        let src = [queenside_bitrow, queenside_bitrow << 56][color as usize];
+        let dst = [queenside_dest, queenside_dest << 56][color as usize];
+        [Move::new_invalid(), Move::new(src, dst, PieceType::KING, color, 0)][may_castle]
+    }
+
+    #[inline]
+    fn castling_helper(&self, color: Colors, inbetween_mask: u64, has_rights: bool) -> bool {
+        let inbetween_space = [inbetween_mask, inbetween_mask << 56][color as usize];
+        let no_blockers = (inbetween_space & self.get_full_pieces_mask()) == 0;
+        has_rights &&!self.is_king_in_check(color) && no_blockers
+    }
+
+    #[inline]
+    pub fn may_castle_kingside(&self, color: Colors) -> bool {
+        let color_can_castle = self.has_kingside_castling_rights[color as usize];
+        self.castling_helper(color, 0b00000110u64, color_can_castle)
+    }
+
+    #[inline]
+    pub fn may_castle_queenside(&self, color: Colors) -> bool {
+        let color_can_castle = self.has_queenside_castling_rights[color as usize];
+        self.castling_helper(color, 0b01110000u64, color_can_castle)
     }
 }
 
