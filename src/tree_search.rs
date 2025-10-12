@@ -13,7 +13,7 @@ pub enum TerminalState {
 // Core idea is same as usual MCTS but replacing rollout with NN eval
 pub struct ChessTree {
     root: ChessNode,
-    arena: Vec<Vec<ChessNode>>,  // will sometimes need to be GC'd after re-rooting, TODO
+    arena: Vec<Vec<ChessNode>>,  // a child of the root is always index [i][0]
 }
 
 
@@ -67,7 +67,7 @@ impl ChessNode {
     }
 
     pub fn terminal(&self) -> TerminalState {
-        
+        TerminalState::DRAW
     }
 
 }
@@ -96,12 +96,12 @@ impl ChessTree {
         // TODO
     }
     pub fn get_action_probabilities(&self, temperature: f64) -> Vec<f64> {
-        let total = self.root.children.iter().fold(0f64, |acc, &i| acc + (self.arena[i].visit_count as f64).powf(1f64 / temperature));
-        self.root.children.iter().map(|&i| (self.arena[i].visit_count as f64).powf(1f64 / temperature) / total).collect()
+        let total = self.root.children.iter().fold(0f64, |acc, &i| acc + (self.arena[i][0].visit_count as f64).powf(1f64 / temperature));
+        self.root.children.iter().map(|&i| (self.arena[i][0].visit_count as f64).powf(1f64 / temperature) / total).collect()
     }
     
     pub fn select_child(&self, cur: &ChessNode) -> &ChessNode {
-        cur.children.iter().map(|&i| &self.arena[i]).reduce(|x, y| if x.ucb() > y.ucb() { x } else { y }).unwrap()
+        cur.children.iter().map(|&i| &self.arena[cur.root_index][i]).reduce(|x, y| if x.ucb() > y.ucb() { x } else { y }).unwrap()
     }
 
     pub fn select(&self) -> &ChessNode {
