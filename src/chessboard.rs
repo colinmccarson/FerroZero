@@ -52,13 +52,23 @@ pub enum PieceType {
     INVALID = 6,
 }
 
+static MAP_TO_PIECETYPE: [PieceType; 6] = [PieceType::PAWN, PieceType::ROOK, PieceType::KNIGHT, PieceType::BISHOP, PieceType::QUEEN, PieceType::INVALID];
+impl PieceType {
+    #[inline]
+    pub fn from_usize(n: usize) -> PieceType {
+        let ind = branchless_select(n > 4, n as u64, 5) as usize;
+        MAP_TO_PIECETYPE[ind]
+    }
+}
+
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Move {
     source: u64,
     dest: u64,
     piece_type: PieceType,
     color: Colors,
-    enpassant_location: u64,
+    enpassant_to: u64,
     rook_to: u64, // castling use only
     king_to: u64, //castling use only
     promotion: PieceType
@@ -67,13 +77,13 @@ pub struct Move {
 
 impl Move {
     #[inline]
-    pub fn new(source: u64, dest: u64, piece_type: PieceType, color: Colors, enpassant_location: u64) -> Move {
-        Move { source, dest, piece_type, color, enpassant_location, rook_to: 0, king_to: 0 , promotion: PieceType::INVALID}
+    pub fn new(source: u64, dest: u64, piece_type: PieceType, color: Colors, enpassant_to: u64) -> Move {
+        Move { source, dest, piece_type, color, enpassant_to, rook_to: 0, king_to: 0 , promotion: PieceType::INVALID}
     }
 
     #[inline]
     pub fn new_invalid() -> Move {
-        Move { source: 0, dest: 0, piece_type: PieceType::INVALID, color: Colors::WHITE, enpassant_location: 0, rook_to: 0, king_to: 0, promotion: PieceType::INVALID }
+        Move { source: 0, dest: 0, piece_type: PieceType::INVALID, color: Colors::WHITE, enpassant_to: 0, rook_to: 0, king_to: 0, promotion: PieceType::INVALID }
     }
 
     #[inline]
@@ -82,7 +92,7 @@ impl Move {
         let kingside_rook_to = 0b00000100u64;
         let king_to = [kingside_king_to, kingside_king_to << 56][color as usize];
         let rook_to = [kingside_rook_to, kingside_rook_to << 56][color as usize];
-        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_location: 0, rook_to, king_to, promotion: PieceType::INVALID }
+        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_to: 0, rook_to, king_to, promotion: PieceType::INVALID }
     }
 
     #[inline]
@@ -91,7 +101,7 @@ impl Move {
         let queenside_king_to = 0b00100000u64;
         let king_to = [queenside_king_to, queenside_king_to << 56][color as usize];
         let rook_to = [queenside_rook_to, queenside_rook_to << 56][color as usize];
-        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_location: 0, rook_to, king_to, promotion: PieceType::INVALID }
+        Move { source: 0u64, dest: 0u64, piece_type: PieceType::KING, color: Colors::WHITE, enpassant_to: 0, rook_to, king_to, promotion: PieceType::INVALID }
     }
 
     #[inline]
@@ -114,6 +124,25 @@ impl Move {
     pub fn is_castling(&self) -> bool {
         self.is_kingside_castle() || self.is_queenside_castle()
     }
+
+    #[inline]
+    pub fn is_pawn_move_2sq(&self) -> bool {
+        let rank_4 = RANK_2 << 16;
+        let rank_5 = RANK_7 >> 16;
+        let white_cond = ((self.source & RANK_2) > 0) && ((self.dest & rank_4) > 0);
+        let black_cond = ((self.source & RANK_7) > 0) && ((self.dest & rank_5) > 0);
+        (self.piece_type == PieceType::PAWN) && (white_cond || black_cond)
+    }
+
+    #[inline]
+    pub fn is_enpassant(&self) -> bool {
+        self.enpassant_to != 0
+    }
+
+    #[inline]
+    pub fn enpassant_takes_sq(&self) -> u64 {
+        branchless_select(self.is_enpassant(), 0u64, branchless_select(self.color == Colors::WHITE, self.enpassant_to << 8, self.enpassant_to >> 8))
+    }
 }
 
 
@@ -122,20 +151,19 @@ struct PossibleMoves {
     source: u64,
     dests: u64,
     color: Colors,
-    enpassant_location: u64,
+    enpassant_takes: u64,
     piece_type: PieceType,
 } // TODO can compress this a lot, probably into one u64 or u32, use the move index 0-64
-// TODO impl promotion, fix enpassant
 
 
-impl PossibleMoves {
+impl PossibleMoves {  // TODO just remove this intermediary struct alltogether
     #[inline]
-    pub fn new(source: u64, dests: u64, color: Colors, enpassant_location: u64, piece_type: PieceType) -> PossibleMoves {
+    pub fn new(source: u64, dests: u64, color: Colors, enpassant_takes: u64, piece_type: PieceType) -> PossibleMoves {
         PossibleMoves {
             source,
             dests,
             color,
-            enpassant_location,
+            enpassant_takes,
             piece_type,
         }
     }
@@ -146,16 +174,39 @@ impl PossibleMoves {
     }
 
     #[inline]
-    pub fn to_moves(&self) -> ([Move; 64], usize) {
+    fn enpassant_opportunity(&self, dest: u64) -> u64 {
+        let rank_4 = RANK_2 << 16;
+        let rank_5 = RANK_7 >> 16;
+        let white_is_taking_pos = (rank_5 & self.enpassant_takes) << 8;
+        let black_is_taking_pos = (rank_4 & self.enpassant_takes) >> 8;
+        let result = branchless_select(self.color == Colors::BLACK, white_is_taking_pos, black_is_taking_pos);
+        dest & result
+    }
+
+    #[inline]
+    fn could_promote(&self, dest: u64) -> bool {
+        let white_cond = (dest & RANK_8) > 0;
+        let black_cond = (dest & RANK_1) > 0;
+        (self.piece_type == PieceType::PAWN) && (branchless_select(self.color == Colors::WHITE, black_cond as u64, white_cond as u64) == 1)
+    }
+    // TODO this is not branchless
+    #[inline]
+    pub fn to_moves(&self) -> ([Move; 64], usize) { // TODO handle promotions here
         let mut dests = self.dests;
-        let mut result: [Move; 64] = [Move::new(self.source, 0u64, PieceType::INVALID, self.color, self.enpassant_location); 64]; // TODO can definitely avoid some construction here
+        let mut result: [Move; 64] = [Move::new(self.source, 0u64, PieceType::INVALID, self.color, self.enpassant_takes); 64]; // TODO can definitely avoid some construction here
         let mut i = 0;
         while dests != 0 && self.source != 0 {
             let nxt = 1u64 << dests.trailing_zeros();
-            dests &= !nxt;
-            result[i].dest = nxt;
-            result[i].piece_type = self.piece_type;
-            i += 1;
+            let can_promote = self.could_promote(nxt);
+            let increment = branchless_select(can_promote, 1, 4) as usize;
+            for j in 0..increment {
+                dests &= !nxt;
+                result[i].dest = nxt;
+                result[i].piece_type = self.piece_type;
+                result[i].enpassant_to = self.enpassant_opportunity(nxt);
+                result[i].promotion = PieceType::from_usize(branchless_select(can_promote, (PieceType::INVALID as usize) as u64, (j as u64) + 1u64) as usize);
+                i += 1;
+            }
         }
         (result, i)
     }
@@ -178,7 +229,7 @@ fn get_next_piece_as_u64_and_rm_from_source(source: &mut u64) -> (usize, u64) {
 pub struct Chessboard {
     // TODO refactor this for [color, piece type] index
     pieces: [[u64; 6]; 2],
-    enpassant_location: u64, // bitboard square where enpassant would happen
+    enpassant_takes: u64, // bitboard square that gets set whe na pawn moves 2 squares forwards
     has_kingside_castling_rights: [bool; 2],
     has_queenside_castling_rights: [bool; 2],
 }
@@ -221,7 +272,7 @@ impl Chessboard {
 
         Chessboard {
             pieces: [white, black],
-            enpassant_location: 0,
+            enpassant_takes: 0,
             has_kingside_castling_rights: [true, true],
             has_queenside_castling_rights: [true, true],
         }
@@ -230,7 +281,7 @@ impl Chessboard {
     pub fn new_blank() -> Chessboard {
         Chessboard {
             pieces: [[0u64; 6]; 2],
-            enpassant_location: 0,
+            enpassant_takes: 0,
             has_kingside_castling_rights: [true, true],
             has_queenside_castling_rights: [true, true],
         }
@@ -271,13 +322,13 @@ impl Chessboard {
             let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].piece_type = [PieceType::PAWN, PieceType::INVALID][(pawn_sq == 0) as usize];
             all_possible_moves[i].source = pawn_sq;
-            all_possible_moves[i].dests = pawn_sq << 8;
+            all_possible_moves[i].dests = (pawn_sq << 8) & !all_occ;
             all_possible_moves[i].dests |= (((pawn_sq & RANK_2) << 8) & !all_occ) << 8;
             all_possible_moves[i].dests &= !all_occ;
             all_possible_moves[i].dests |= (((pawn_sq << 7) & !FILE_A)
                 | ((pawn_sq << 9) & !FILE_H))
-                & (black_occ | self.enpassant_location);
-            all_possible_moves[i].enpassant_location = self.enpassant_location; // TODO need to get the en passant location that would result from the move
+                & (black_occ | (self.enpassant_takes << 8));
+            all_possible_moves[i].enpassant_takes = self.enpassant_takes;
         }
         all_possible_moves
     }
@@ -286,18 +337,18 @@ impl Chessboard {
         let white_occ = self.get_combined_pieces(Colors::WHITE);
         let all_occ = self.get_combined_pieces(Colors::BLACK) | white_occ;
         let mut source = self.get_piece(Colors::BLACK, PieceType::PAWN);
-        let mut all_possible_moves = [PossibleMoves::new(0, 0, Colors::WHITE, 0, PieceType::PAWN); 8];
+        let mut all_possible_moves = [PossibleMoves::new(0, 0, Colors::BLACK, 0, PieceType::PAWN); 8];
         for i in 0..8 {
             let (pawn_ind, pawn_sq) = get_next_piece_as_u64_and_rm_from_source(&mut source);
             all_possible_moves[i].piece_type = [PieceType::PAWN, PieceType::INVALID][(pawn_sq == 0) as usize];
             all_possible_moves[i].source = pawn_sq;
-            all_possible_moves[i].dests = pawn_sq >> 8;
+            all_possible_moves[i].dests = (pawn_sq >> 8) & !all_occ;
             all_possible_moves[i].dests |= (((pawn_sq & RANK_7) >> 8) & !all_occ) >> 8;
             all_possible_moves[i].dests &= !all_occ;
             all_possible_moves[i].dests |= (((pawn_sq >> 7) & !FILE_H)
                 | ((pawn_sq >> 9) & !FILE_A))
-                & (white_occ | self.enpassant_location);
-            all_possible_moves[i].enpassant_location = self.enpassant_location;
+                & (white_occ | (self.enpassant_takes >> 8));
+            all_possible_moves[i].enpassant_takes = self.enpassant_takes;
         }
         all_possible_moves
     }
@@ -374,7 +425,7 @@ impl Chessboard {
         let own_occ = self.get_combined_pieces(color);
         let source = self.get_piece(color, PieceType::KING);
         let possible_moves = KING_MOVES[source.trailing_zeros() as usize];
-        PossibleMoves::new(source, possible_moves & !own_occ, color, self.enpassant_location, PieceType::KING)  // TODO check enpassant location
+        PossibleMoves::new(source, possible_moves & !own_occ, color, 0, PieceType::KING)  // TODO check enpassant location
     }
 
     pub fn generate_pseudolegal_queen_moves(&self, color: Colors) -> [PossibleMoves; 9] {
@@ -399,31 +450,39 @@ impl Chessboard {
 
     // TODO this could be slow
     #[inline(always)]
-    pub fn play_move(&self, mv: Move) -> Chessboard {
+    pub fn play_move(&self, mv: &Move) -> Chessboard {
         debug_assert!(mv.source.count_ones() == 1 || mv.is_queenside_castle() || mv.is_kingside_castle());
         debug_assert!(mv.dest.count_ones() == 1 || mv.is_queenside_castle() || mv.is_kingside_castle());
 
         let mut nxt_board = self.clone();
+        // remove current piece
         nxt_board.pieces[mv.color as usize][mv.piece_type as usize] &= !mv.source;
-        nxt_board.pieces[mv.color as usize][mv.piece_type as usize] |= mv.dest;
+
         let other_color = (mv.color as usize + 1) % 2;
 
-        for pt in 0usize..6 {
-            nxt_board.pieces[other_color][pt] &= !mv.dest;  // for takes
+        // calculate takes
+        for pt in 0usize..6 { // does nothing if enpassant or castling
+            nxt_board.pieces[other_color][pt] &= !mv.dest; // if enpassant or castling, this isn't set
         }
+        // move piece / promotion handling
+        let piece_type_ind = branchless_select(mv.promotion != PieceType::INVALID, mv.piece_type as u64, mv.promotion as u64) as usize;
+        nxt_board.pieces[mv.color as usize][piece_type_ind] |= mv.dest;
+
+        nxt_board.pieces[other_color][PieceType::PAWN as usize] &= !mv.enpassant_takes_sq();
+        nxt_board.enpassant_takes = branchless_select(mv.is_pawn_move_2sq(), 0u64, mv.dest);
 
         // for castling, the above does nothing. for not castling, the below does nothing.
         let color_bool = mv.color == Colors::BLACK;
-        let cur_rooks = self.get_piece(mv.color, PieceType::ROOK);
+        let cur_rooks = nxt_board.get_piece(mv.color, PieceType::ROOK);
         let kingside_rook_from_to = branchless_select(color_bool, 0b00001001u64 ^ cur_rooks, (0b00000001u64 << 56) ^ cur_rooks);
         let queenside_rook_from_to = branchless_select(color_bool, 0b10000000u64 ^ cur_rooks, (0b10000000u64 << 56) ^ cur_rooks);
         
-        nxt_board.set_piece(mv.color, PieceType::KING, branchless_select(mv.is_castling(), self.get_piece(mv.color, PieceType::KING), mv.king_to));
+        nxt_board.set_piece(mv.color, PieceType::KING, branchless_select(mv.is_castling(), nxt_board.get_piece(mv.color, PieceType::KING), mv.king_to));
         nxt_board.set_piece(mv.color, PieceType::ROOK, branchless_select(
             mv.is_queenside_castle(),
             branchless_select(
                 mv.is_kingside_castle(),
-                self.get_piece(mv.color, PieceType::ROOK),
+                nxt_board.get_piece(mv.color, PieceType::ROOK),
                 kingside_rook_from_to,
             ),
             queenside_rook_from_to,
@@ -459,7 +518,7 @@ impl Chessboard {
         let bishop_moves = self.generate_pseudolegal_bishop_moves(color);
         let queen_moves = self.generate_pseudolegal_queen_moves(color);
         let king_move = self.generate_pseudolegal_king_moves(color);
-        let mut decomposed_moves: [Move; 256] = [Move::new(0, 0, PieceType::INVALID, color, self.enpassant_location); 256];
+        let mut decomposed_moves: [Move; 256] = [Move::new(0, 0, PieceType::INVALID, color, self.enpassant_takes); 256];
         let mut i = 0usize;
         Self::set_array_while_valid(&mut decomposed_moves, &pawn_moves, &mut i);
         Self::set_array_while_valid(&mut decomposed_moves, &rook_moves, &mut i);
@@ -495,7 +554,8 @@ impl Chessboard {
         let (all_moves, num_legal_moves) = self.generate_all_moves(color);
         let mut every_move_leaves_king_in_check = true;
         for i in 0..num_legal_moves {
-            every_move_leaves_king_in_check &= self.play_move(all_moves[i]).is_king_in_check(color);
+            let nxt_board = self.play_move(&all_moves[i]);
+            every_move_leaves_king_in_check &= nxt_board.is_king_in_check(color);
         }
         every_move_leaves_king_in_check
     }
@@ -526,7 +586,7 @@ impl Chessboard {
         let (mvs, num_legal) = self.generate_all_moves(color);
         let mut ret: [(Chessboard, Move); 256] = [(self.clone(), Move::new_invalid()); 256];
         for i in 0..num_legal {
-            ret[i].0 = ret[i].0.play_move(mvs[i]);
+            ret[i].0 = ret[i].0.play_move(&mvs[i]);
             ret[i].1 = mvs[i];
         }
         (ret, num_legal)
@@ -850,30 +910,30 @@ mod tests {
     fn test_white_pawn_en_passant() {
         let mut board = Chessboard::new_blank();
 
-        let pawn = 1u64 << (5 * 8 + 3);
-        let enpassant_location = 1u64 << (6 * 8 + 4);
-        board.set_piece(Colors::WHITE, PieceType::PAWN, pawn);
-        board.enpassant_location = enpassant_location;
-        board.set_piece(Colors::BLACK, PieceType::PAWN, 1u64 << (5 * 8 + 4));
+        let white_pawn = 1u64 << (5 * 8 + 3);
+        let black_pawn = 1u64 << (5 * 8 + 4);
+        board.set_piece(Colors::WHITE, PieceType::PAWN, white_pawn);
+        board.enpassant_takes = black_pawn;
+        board.set_piece(Colors::BLACK, PieceType::PAWN, black_pawn);
 
         let moves = board.generate_pseudolegal_white_pawn_moves();
-        let mv = moves.iter().find(|m| m.source == pawn).unwrap();
-        assert_eq!(mv.dests, enpassant_location | (pawn << 8));
+        let mv = moves.iter().find(|m| m.source == white_pawn).unwrap();
+        assert_eq!(mv.dests, (black_pawn << 8) | (white_pawn << 8));
     }
 
     #[test]
     fn test_black_pawn_en_passant() {
         let mut board = Chessboard::new_blank();
 
-        let pawn = 1u64 << (4 * 8 + 3); // pawn on e4
-        let enpassant_location = 1u64 << (3 * 8 + 4); // d3
-        board.set_piece(Colors::BLACK, PieceType::PAWN, pawn);
-        board.enpassant_location = enpassant_location;
-        board.set_piece(Colors::WHITE, PieceType::PAWN, 1u64 << (4 * 8 + 4));
+        let black_pawn = 1u64 << (4 * 8 + 3); // pawn on e4
+        let white_pawn = 1u64 << (4 * 8 + 4); // d3
+        board.set_piece(Colors::BLACK, PieceType::PAWN, black_pawn);
+        board.enpassant_takes = white_pawn;
+        board.set_piece(Colors::WHITE, PieceType::PAWN, white_pawn);
 
         let moves = board.generate_pseudolegal_black_pawn_moves();
-        let mv = moves.iter().find(|m| m.source == pawn).unwrap();
-        assert_eq!(mv.dests, enpassant_location | (pawn >> 8));
+        let mv = moves.iter().find(|m| m.source == black_pawn).unwrap();
+        assert_eq!(mv.dests, (white_pawn >> 8) | (black_pawn >> 8));
     }
 
     #[test]
@@ -914,8 +974,8 @@ mod tests {
         nxt_board.set_piece(Colors::BLACK, PieceType::PAWN, take1 | take2 | take3 | take4);
         let fourth_pawn = fourth_pawn << 16;
         nxt_board.set_piece(Colors::WHITE, PieceType::PAWN, first_pawn | second_pawn | third_pawn | fourth_pawn | fifth_pawn);
-        let en_passant_location = map_rank_and_file_to_sq(2, 5);
-        nxt_board.enpassant_location = en_passant_location;
+        let en_passant_location = map_rank_and_file_to_sq(3, 5);
+        nxt_board.enpassant_takes = en_passant_location;
         let moves = nxt_board.generate_pseudolegal_black_pawn_moves();
         for mv in moves {
             if mv.source == take1 {
@@ -925,7 +985,7 @@ mod tests {
             } else if mv.source == take3 {
                 assert_eq!(mv.dests, first_pawn);
             } else if mv.source == take4 {
-                assert_eq!(mv.dests, en_passant_location);
+                assert_eq!(mv.dests, en_passant_location >> 8);
             }
         }
     }
@@ -1068,14 +1128,8 @@ mod tests {
 
         let knight_moves = test_board.generate_pseudolegal_knight_moves(Colors::BLACK);
         let takes_pawn = knight_moves.iter().find(|m| m.dests & pawn > 0).unwrap();
-        let takes_pawn_mv = Move {
-            source: takes_pawn.source,
-            dest: pawn & takes_pawn.dests,
-            piece_type: PieceType::KNIGHT,
-            color: Colors::BLACK,
-            enpassant_location: 0,
-        };
-        let nxt_board = test_board.play_move(takes_pawn_mv);
+        let takes_pawn_mv = Move::new(takes_pawn.source, pawn & takes_pawn.dests, PieceType::KNIGHT, Colors::BLACK, 0);
+        let nxt_board = test_board.play_move(&takes_pawn_mv);
 
         assert_eq!(
             nxt_board.get_piece(Colors::BLACK, PieceType::KNIGHT) & black_knight,
@@ -1125,5 +1179,77 @@ mod tests {
         test_board.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 7));
         assert!(!test_board.is_checkmate(Colors::WHITE));
         assert!(test_board.is_stalemate(Colors::WHITE))
+    }
+
+    #[test]
+    fn test_enpassant_sequence() {  // TODO enpassant on edge of board
+        let mut test_board = Chessboard::new_blank();
+        let white_pawn = map_rank_and_file_to_sq(1, 2);
+        let enp_to = white_pawn << 8;
+        let black_pawn = map_rank_and_file_to_sq(3, 3);
+        test_board.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(0, 3));
+        test_board.set_piece(Colors::WHITE, PieceType::PAWN, white_pawn);
+        test_board.set_piece(Colors::BLACK, PieceType::PAWN, black_pawn);
+        test_board.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 3));
+
+        let pawn_move = Move::new(test_board.get_piece(Colors::WHITE, PieceType::PAWN), white_pawn << 16, PieceType::PAWN, Colors::WHITE, 0);
+        assert!(pawn_move.is_pawn_move_2sq());
+        let nxt_board = test_board.play_move(&pawn_move);
+        assert_eq!(nxt_board.get_piece(Colors::WHITE, PieceType::PAWN), pawn_move.dest);
+        assert_eq!(nxt_board.enpassant_takes, white_pawn << 16);
+        let black_moves = nxt_board.generate_pseudolegal_black_pawn_moves()[0];
+        assert_eq!(black_moves.enpassant_takes, white_pawn << 16);
+        assert_eq!(black_moves.dests, map_rank_and_file_to_sq(2, 3) | map_rank_and_file_to_sq(2, 2));
+        assert_eq!(black_moves.color, Colors::BLACK);
+        let (black_pawn_mvs, count) = black_moves.to_moves();
+        let mv1 = black_pawn_mvs[0];
+        let mv2 = black_pawn_mvs[1];
+        assert!((mv1.is_enpassant() || mv2.is_enpassant()) && !(mv1.is_enpassant() && mv2.is_enpassant()));
+        if mv1.is_enpassant() {
+            let enp_board = nxt_board.play_move(&mv1);
+            assert_eq!(mv1.enpassant_takes_sq(), white_pawn << 16);
+            assert_eq!(enp_board.get_piece(Colors::WHITE, PieceType::PAWN), 0u64);
+            assert_eq!(enp_board.get_piece(Colors::BLACK, PieceType::PAWN), enp_to);
+        }
+        else if mv2.is_enpassant() {
+            let enp_board = nxt_board.play_move(&mv2);
+            assert_eq!(mv2.enpassant_takes_sq(), white_pawn << 16);
+            assert_eq!(enp_board.get_piece(Colors::WHITE, PieceType::PAWN), 0u64);
+            assert_eq!(enp_board.get_piece(Colors::BLACK, PieceType::PAWN), enp_to);
+        }
+        else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_promotion() {
+        let mut test_board1 = Chessboard::new_blank();
+        test_board1.set_piece(Colors::WHITE, PieceType::PAWN, map_rank_and_file_to_sq(6, 0));
+        test_board1.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(0, 7));
+        test_board1.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 7));
+        let (mvs, count) = test_board1.generate_all_moves(Colors::WHITE);
+        let pawn_moves: Vec<&Move> = mvs.iter().filter(|&mv| mv.piece_type == PieceType::PAWN).collect();
+        assert_eq!(pawn_moves.len(), 4); // four promo types
+
+        let promo_to_rook_mvs = *pawn_moves.iter().find(|&&mv| mv.promotion == PieceType::ROOK).unwrap();
+        let rook_board1 = test_board1.play_move(promo_to_rook_mvs);
+        assert!(rook_board1.is_king_in_check(Colors::BLACK));
+        assert_eq!(rook_board1.get_piece(Colors::WHITE, PieceType::ROOK), map_rank_and_file_to_sq(7, 0));
+
+        let promote_bishop = *pawn_moves.iter().find(|&&mv| mv.promotion == PieceType::BISHOP).unwrap();
+        let bishop_board1 = test_board1.play_move(promote_bishop);
+        assert!(!bishop_board1.is_king_in_check(Colors::BLACK));
+        assert_eq!(bishop_board1.get_piece(Colors::WHITE, PieceType::BISHOP), map_rank_and_file_to_sq(7, 0));
+
+        let promote_knight = *pawn_moves.iter().find(|&&mv| mv.promotion == PieceType::KNIGHT).unwrap();
+        let knight_board1 = test_board1.play_move(promote_knight);
+        assert!(!knight_board1.is_king_in_check(Colors::BLACK));
+        assert_eq!(knight_board1.get_piece(Colors::WHITE, PieceType::KNIGHT), map_rank_and_file_to_sq(7, 0));
+
+        let promote_queen = *pawn_moves.iter().find(|&&mv| mv.promotion == PieceType::QUEEN).unwrap();
+        let queen_board1 = test_board1.play_move(promote_queen);
+        assert!(queen_board1.is_king_in_check(Colors::BLACK));
+        assert_eq!(queen_board1.get_piece(Colors::WHITE, PieceType::QUEEN), map_rank_and_file_to_sq(7, 0));
     }
 }
