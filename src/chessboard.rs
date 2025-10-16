@@ -15,12 +15,12 @@ pub enum Colors {
 }
 
 impl Colors {
-    pub fn map_usize_to_color(n: usize) -> Colors {
+    pub fn from_usize(n: usize) -> Colors {
         [Colors::WHITE, Colors::BLACK][n % 2]
     }
 
     pub fn opposite_color(color: Colors) -> Colors {
-        Colors::map_usize_to_color(color as usize + 1)
+        Colors::from_usize(color as usize + 1)
     }
 }
 
@@ -116,17 +116,17 @@ impl Move {
 
     #[inline]
     pub fn is_kingside_castle(&self) -> bool {
+        let kingside_rook_to_from = 0b00000101u64;
         let kingside_king_to = 0b00000010u64;
-        let kingside_rook_to = 0b00000100u64;
-        (self.rook_to_from == kingside_rook_to || self.rook_to_from == (kingside_rook_to << 56))
+        (self.rook_to_from == kingside_rook_to_from || self.rook_to_from == (kingside_rook_to_from << 56))
         && (self.king_to == kingside_king_to || self.king_to == (kingside_king_to << 56))
     }
 
     #[inline]
     pub fn is_queenside_castle(&self) -> bool {
-        let queenside_rook_to = 0b00010000u64;
+        let queenside_rook_to_from = 0b10010000u64;
         let queenside_king_to = 0b00100000u64;
-        (self.rook_to_from == queenside_rook_to || self.rook_to_from == (queenside_rook_to << 56))
+        (self.rook_to_from == queenside_rook_to_from || self.rook_to_from == (queenside_rook_to_from << 56))
         && (self.king_to == queenside_king_to || self.king_to == (queenside_king_to << 56))
     }
     
@@ -440,8 +440,6 @@ impl Chessboard {
 
         let kingside = self.may_castle_kingside(color);
         let kingside_mv = Move::new_kingside_castle(color);
-        ret[count_legal].source = branchless_select(kingside, 0, branchless_select(color == Colors::WHITE, 0b00001000 << 56, 0b00001000));
-        ret[count_legal].dest = branchless_select(kingside, ret[count_legal].dest, kingside_mv.dest);
         ret[count_legal].king_to = branchless_select(kingside, ret[count_legal].king_to, kingside_mv.king_to);
         ret[count_legal].rook_to_from = branchless_select(kingside, ret[count_legal].rook_to_from, kingside_mv.rook_to_from);
         ret[count_legal].piece_type = PieceType::from_u64(branchless_select(kingside, ret[count_legal].piece_type.to_u64() , PieceType::KING.to_u64()));
@@ -449,8 +447,6 @@ impl Chessboard {
 
         let queenside = self.may_castle_queenside(color);
         let queenside_mv = Move::new_queenside_castle(color);
-        ret[count_legal].source = branchless_select(queenside, 0, branchless_select(color == Colors::WHITE, 0b00001000 << 56, 0b00001000));
-        ret[count_legal].dest = branchless_select(queenside, ret[count_legal].dest, 0u64);
         ret[count_legal].king_to = branchless_select(queenside, ret[count_legal].king_to, queenside_mv.king_to);
         ret[count_legal].rook_to_from = branchless_select(queenside, ret[count_legal].rook_to_from, queenside_mv.rook_to_from);
         ret[count_legal].piece_type = PieceType::from_u64(branchless_select(queenside, ret[count_legal].piece_type.to_u64() , PieceType::KING.to_u64()));
@@ -517,21 +513,10 @@ impl Chessboard {
 
         // Handle castling
         // for castling, the above does nothing. for not castling, the below does nothing.
-        let color_bool = mv.color == Colors::BLACK;
-        let cur_rooks = nxt_board.get_piece(mv.color, PieceType::ROOK);
-        let kingside_rook_from_to = branchless_select(color_bool, 0b00000101u64 ^ cur_rooks, (0b00000101u64 << 56) ^ cur_rooks);  // TODO verify that rook square is empty in castle legality check
-        let queenside_rook_from_to = branchless_select(color_bool, 0b10010000u64 ^ cur_rooks, (0b10010000u64 << 56) ^ cur_rooks);
-        
+        // TODO verify that rook square is empty in castle legality check
+
         nxt_board.set_piece(mv.color, PieceType::KING, branchless_select(mv.is_castling(), nxt_board.get_piece(mv.color, PieceType::KING), mv.king_to));
-        nxt_board.set_piece(mv.color, PieceType::ROOK, branchless_select(
-            mv.is_queenside_castle(),
-            branchless_select(
-                mv.is_kingside_castle(),
-                nxt_board.get_piece(mv.color, PieceType::ROOK),
-                kingside_rook_from_to,
-            ),
-            queenside_rook_from_to,
-        ));
+        nxt_board.set_piece(mv.color, PieceType::ROOK, mv.rook_to_from ^ nxt_board.get_piece(mv.color, PieceType::ROOK)); // Move.rook_to_from is only nonzero for castling; castling moves are only generated when castling is legal
         // Update castling rights
         let king_start = branchless_select(mv.color == Colors::WHITE, 0b00001000 << 56, 0b00001000);
         let kingside_rook_start = branchless_select(mv.color == Colors::WHITE, 0b1 << 56, 0b1);
@@ -692,16 +677,20 @@ impl Chessboard {
         !self.is_king_in_check(color) && no_blockers && not_attacked_along_path
     }
 
-    #[inline]
+    #[inline] // TODO all castling repeated constants should be enumerated in a const.rs somewhere
     pub fn may_castle_kingside(&self, color: Colors) -> bool { // TODO check attacks on king path, probably need pext tables in long term
         let color_can_castle = self.kingside_castling_rights[color as usize];  // TODO kingside rook move sets rights to false
-        color_can_castle && self.castling_helper(color, 0b00000110u64)
+        let kingside_rook_dest: u64 = branchless_select(color == Colors::WHITE, 0b00000100 << 56, 0b00000100);
+        let rook_dest_clear = (kingside_rook_dest & self.get_full_pieces_mask()) == 0;
+        color_can_castle && self.castling_helper(color, 0b00000110u64) && rook_dest_clear
     }
 
     #[inline]
     pub fn may_castle_queenside(&self, color: Colors) -> bool { // TODO check attacks on king path, probably need pext tables in long term
         let color_can_castle = self.queenside_castling_rights[color as usize];
-        color_can_castle && self.castling_helper(color, 0b01110000u64)
+        let queenside_rook_dest: u64 = branchless_select(color == Colors::WHITE, 0b00010000 << 56, 0b00010000);
+        let rook_dest_clear = (queenside_rook_dest & self.get_full_pieces_mask()) == 0;
+        color_can_castle && self.castling_helper(color, 0b01110000u64) && rook_dest_clear
     }
 
     #[inline]
@@ -1361,5 +1350,22 @@ mod tests {
         let castled = testboard.play_move(kingside_castle);
         assert_eq!(castled.get_piece(Colors::WHITE, PieceType::KING), map_rank_and_file_to_sq(0, 6));
         assert_eq!(castled.get_piece(Colors::WHITE, PieceType::ROOK), map_rank_and_file_to_sq(0, 5));
+    }
+
+    #[test]
+    fn test_check_for_castling() {
+        for i in 0..2usize {
+            let color = Colors::from_usize(i);
+
+            let kingside_castle = Move::new_kingside_castle(color);
+            assert!(kingside_castle.is_kingside_castle());
+            assert!(!kingside_castle.is_queenside_castle());
+            assert!(kingside_castle.is_castling());
+
+            let queenside_castle = Move::new_queenside_castle(color);
+            assert!(queenside_castle.is_queenside_castle());
+            assert!(!queenside_castle.is_kingside_castle());
+            assert!(queenside_castle.is_castling());
+        }
     }
 }
