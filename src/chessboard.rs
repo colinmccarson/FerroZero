@@ -146,7 +146,7 @@ impl Move {
 
     #[inline]
     pub fn is_enpassant(&self) -> bool {
-        self.enpassant_to != 0
+        (self.piece_type == PieceType::PAWN) && (self.enpassant_to != 0)
     }
 
     #[inline]
@@ -1268,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enpassant_sequence() {  // TODO enpassant on edge of board
+    fn test_enpassant_sequence() {
         let mut test_board = Chessboard::new_blank();
         let white_pawn = map_rank_and_file_to_sq(1, 2);
         let enp_to = white_pawn << 8;
@@ -1306,6 +1306,36 @@ mod tests {
         else {
             unreachable!();
         }
+    }
+
+    #[test]
+    fn test_enpassant_board_edge() {
+        let mut testboard = Chessboard::new_blank();
+        testboard.set_piece(Colors::WHITE, PieceType::PAWN, map_rank_and_file_to_sq(1, 0) | map_rank_and_file_to_sq(4, 7));
+        testboard.set_piece(Colors::BLACK, PieceType::PAWN, map_rank_and_file_to_sq(3, 1) | map_rank_and_file_to_sq(6, 6));
+        testboard.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(7, 0)); // need a random move for white
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(0, 7)); // prevent out of bounds
+        let (mvs, count) = testboard.generate_all_moves(Colors::WHITE);
+        let first_mv = mvs.iter().find(|mv| mv.source == map_rank_and_file_to_sq(1, 0) && mv.is_pawn_move_2sq()).unwrap();
+        let black_may_enp = testboard.play_move(first_mv);
+        let (nxt_mvs, count) = black_may_enp.generate_all_moves(Colors::BLACK);
+        assert_eq!(nxt_mvs.iter().filter(|mv| mv.is_enpassant()).count(), 1);
+        let black_enp = nxt_mvs.iter().find(|mv| mv.is_enpassant()).unwrap();
+        let black_takes_enp = black_may_enp.play_move(black_enp);
+        assert_eq!(black_takes_enp.get_piece(Colors::WHITE, PieceType::PAWN), map_rank_and_file_to_sq(4, 7));
+        assert_eq!(black_takes_enp.get_piece(Colors::BLACK, PieceType::PAWN), map_rank_and_file_to_sq(2, 0) | map_rank_and_file_to_sq(6, 6));
+        let (nxt_mvs, count) = black_takes_enp.generate_all_moves(Colors::WHITE);
+        let random_white_kingmove = nxt_mvs.iter().find(|mv| mv.piece_type == PieceType::KING).unwrap();
+        let black_to_move = black_takes_enp.play_move(random_white_kingmove);
+        let (nxt_mvs, count) = black_to_move.generate_all_moves(Colors::BLACK);
+        let sq2_push = nxt_mvs.iter().find(|mv| mv.is_pawn_move_2sq()).unwrap();
+        let white_may_enp = black_to_move.play_move(sq2_push);
+        let (nxt_mvs, count) = white_may_enp.generate_all_moves(Colors::WHITE);
+        assert_eq!(nxt_mvs.iter().filter(|mv| mv.is_enpassant()).count(), 1);
+        let white_enp = nxt_mvs.iter().find(|mv| mv.is_enpassant()).unwrap();
+        let white_took_enp = white_may_enp.play_move(white_enp);
+        assert_eq!(white_took_enp.get_piece(Colors::BLACK, PieceType::PAWN), map_rank_and_file_to_sq(2, 0));
+        assert_eq!(white_took_enp.get_piece(Colors::WHITE, PieceType::PAWN), map_rank_and_file_to_sq(5, 6));
     }
 
     #[test]
@@ -1412,6 +1442,14 @@ mod tests {
         let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
         assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
 
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [false, true];
+        testboard.queenside_castling_rights = [false, true];
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 4));
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, map_rank_and_file_to_sq(7, 0) | map_rank_and_file_to_sq(7, 7));
+        testboard.set_piece(Colors::WHITE, PieceType::BISHOP, map_rank_and_file_to_sq(5, 4));
+        let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
+        assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
 
         let mut testboard = Chessboard::new_blank();
         testboard.kingside_castling_rights = [false, true];
@@ -1436,7 +1474,7 @@ mod tests {
         for non_castling_mv in mvs.iter().filter(|mv| !mv.is_castling() && mv.piece_type == PieceType::KING) {
             let moved_king = testboard.play_move(non_castling_mv);
             assert!(!moved_king.may_castle_queenside(Colors::WHITE) && !moved_king.may_castle_kingside(Colors::WHITE));
-            assert!(!moved_king.kingside_castling_rights[Colors::WHITE as usize]);
+            assert!(!moved_king.kingside_castling_rights[Colors::WHITE as usize] && !moved_king.queenside_castling_rights[Colors::WHITE as usize]);
             let (nxt_mvs, nxt_count) = moved_king.generate_all_moves(Colors::WHITE);
             assert_eq!(nxt_mvs.iter().find(|mv| mv.is_castling()), None);
         }
@@ -1445,6 +1483,8 @@ mod tests {
             let moved_rook = testboard.play_move(kingside_rook_mv);
             assert!(!moved_rook.may_castle_kingside(Colors::WHITE));
             assert!(moved_rook.may_castle_queenside(Colors::WHITE));
+            assert!(!moved_rook.kingside_castling_rights[Colors::WHITE as usize]);
+            assert!(moved_rook.queenside_castling_rights[Colors::WHITE as usize]);
             let (nxt_mvs, count) = moved_rook.generate_all_moves(Colors::WHITE);
             assert_eq!(nxt_mvs.iter().find(|mv| mv.is_kingside_castle()), None);
             assert_ne!(nxt_mvs.iter().find(|mv| mv.is_queenside_castle()), None);
@@ -1454,6 +1494,8 @@ mod tests {
             let moved_rook = testboard.play_move(queenside_rook_mv);
             assert!(moved_rook.may_castle_kingside(Colors::WHITE));
             assert!(!moved_rook.may_castle_queenside(Colors::WHITE));
+            assert!(moved_rook.kingside_castling_rights[Colors::WHITE as usize]);
+            assert!(!moved_rook.queenside_castling_rights[Colors::WHITE as usize]);
             let (nxt_mvs, count) = moved_rook.generate_all_moves(Colors::WHITE);
             assert_eq!(nxt_mvs.iter().find(|mv| mv.is_queenside_castle()), None);
             assert_ne!(nxt_mvs.iter().find(|mv| mv.is_kingside_castle()), None);
