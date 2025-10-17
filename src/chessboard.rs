@@ -527,8 +527,8 @@ impl Chessboard {
         let kingside_condition = kingside_rights && (((mv.piece_type == PieceType::ROOK) && ((mv.source & kingside_rook_start) > 0)) || ((mv.piece_type == PieceType::KING) && ((mv.source & king_start) > 0)));
         let queenside_condition = queenside_rights && (((mv.piece_type == PieceType::ROOK) && ((mv.source & queenside_rook_start) > 0)) || ((mv.piece_type == PieceType::KING) && ((mv.source & king_start) > 0)));
 
-        nxt_board.kingside_castling_rights[mv.color as usize] = branchless_select(kingside_condition, kingside_rights as u64, false as u64) != 0;
-        nxt_board.queenside_castling_rights[mv.color as usize] = branchless_select(queenside_condition, queenside_rights as u64, false as u64) != 0; // TODO write test to verify this updates correctly
+        nxt_board.kingside_castling_rights[mv.color as usize] = branchless_select(kingside_condition | mv.is_castling(), kingside_rights as u64, false as u64) != 0;
+        nxt_board.queenside_castling_rights[mv.color as usize] = branchless_select(queenside_condition | mv.is_castling(), queenside_rights as u64, false as u64) != 0; // TODO write test to verify this updates correctly
 
         nxt_board
     }
@@ -660,7 +660,7 @@ impl Chessboard {
         let own_occ = self.get_combined_pieces(color);
         let other_occ = self.get_combined_pieces(other_color);
         let total_occ = own_occ | other_occ;
-        let mut b = inbetween_mask;
+        let mut b = inbetween_space;
         let mut is_not_attacked_enroute = true;
         while b != 0 {
             let sq_ind = b.trailing_zeros() as usize;
@@ -669,9 +669,13 @@ impl Chessboard {
             let bishop_rays = Self::generate_pseudolegal_bishop_move_for_sq(sq_ind, total_occ, own_occ);
             let rook_rays = Self::generate_pseudolegal_rook_move_for_sq(sq_ind, total_occ, own_occ);
             let knight_rays = KNIGHT_MOVES[sq_ind];
-            is_not_attacked_enroute &= (bishop_rays & self.get_piece(other_color, PieceType::BISHOP) == 0) && (bishop_rays & self.get_piece(other_color, PieceType::QUEEN) == 0) && (rook_rays & self.get_piece(other_color, PieceType::ROOK) == 0) && (rook_rays & self.get_piece(other_color, PieceType::QUEEN) == 0) && (knight_rays & self.get_piece(other_color, PieceType::KNIGHT) == 0);
+            let knights_dont_attack = (knight_rays & self.get_piece(other_color, PieceType::KNIGHT)) == 0;
+            let bishops_dont_attack = (bishop_rays & self.get_piece(other_color, PieceType::BISHOP)) == 0;
+            let rooks_dont_attack = (rook_rays & self.get_piece(other_color, PieceType::ROOK)) == 0;
+            let queens_dont_attack = ((rook_rays | bishop_rays) & self.get_piece(other_color, PieceType::QUEEN)) == 0;
+            is_not_attacked_enroute &= knights_dont_attack && bishops_dont_attack && rooks_dont_attack && queens_dont_attack;
         }
-        let pawn_diagonals = branchless_select(color == Colors::BLACK, (inbetween_mask << 7) | (inbetween_mask << 9), ((inbetween_mask << 56) >> 7) | ((inbetween_mask << 56) >> 9));
+        let pawn_diagonals = branchless_select(color == Colors::BLACK, (inbetween_space << 7) | (inbetween_space << 9), ((inbetween_space << 56) >> 7) | ((inbetween_space << 56) >> 9));
         let pawns_diagonal_from_path = self.get_piece(other_color, PieceType::PAWN) & pawn_diagonals;
         let not_attacked_along_path = is_not_attacked_enroute && (pawns_diagonal_from_path == 0);
         !self.is_king_in_check(color) && no_blockers && not_attacked_along_path
@@ -690,7 +694,7 @@ impl Chessboard {
         let color_can_castle = self.queenside_castling_rights[color as usize];
         let queenside_rook_dest: u64 = branchless_select(color == Colors::WHITE, 0b00010000 << 56, 0b00010000);
         let rook_dest_clear = (queenside_rook_dest & self.get_full_pieces_mask()) == 0;
-        color_can_castle && self.castling_helper(color, 0b01110000u64) && rook_dest_clear
+        color_can_castle && self.castling_helper(color, 0b00110000u64) && rook_dest_clear
     }
 
     #[inline]
@@ -1336,7 +1340,7 @@ mod tests {
         assert!(queen_board1.is_king_in_check(Colors::BLACK));
         assert_eq!(queen_board1.get_piece(Colors::WHITE, PieceType::QUEEN), map_rank_and_file_to_sq(7, 0));
     }
-
+    // TODO assert_eq! macro that prints u64s when not equal
     #[test]
     fn test_kingside_castling() {
         let mut testboard = Chessboard::new_blank();
@@ -1344,12 +1348,37 @@ mod tests {
         testboard.queenside_castling_rights = [true, true];
         testboard.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(0, 4));
         testboard.set_piece(Colors::WHITE, PieceType::ROOK, map_rank_and_file_to_sq(0, 0) | map_rank_and_file_to_sq(0, 7));
+
+        let black_king = map_rank_and_file_to_sq(7, 4);
+        let black_rooks = map_rank_and_file_to_sq(7, 0) | map_rank_and_file_to_sq(7, 7);
+
+        testboard.set_piece(Colors::BLACK, PieceType::KING, black_king);
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, black_rooks);
+
         let (mvs, count) = testboard.generate_all_moves(Colors::WHITE);
         let queenside_castle = mvs.iter().find(|&mv| mv.is_queenside_castle()).unwrap();
         let kingside_castle = mvs.iter().find(|&mv| mv.is_kingside_castle()).unwrap();
         let castled = testboard.play_move(kingside_castle);
         assert_eq!(castled.get_piece(Colors::WHITE, PieceType::KING), map_rank_and_file_to_sq(0, 6));
-        assert_eq!(castled.get_piece(Colors::WHITE, PieceType::ROOK), map_rank_and_file_to_sq(0, 5));
+        assert_eq!(castled.get_piece(Colors::WHITE, PieceType::ROOK), map_rank_and_file_to_sq(0, 0) | map_rank_and_file_to_sq(0, 5));
+        assert!(!castled.kingside_castling_rights[Colors::WHITE as usize] && !castled.queenside_castling_rights[Colors::WHITE as usize]);
+
+        assert_eq!(castled.get_piece(Colors::BLACK, PieceType::KING), black_king);
+        assert_eq!(castled.get_piece(Colors::BLACK, PieceType::ROOK), black_rooks);
+
+        let (mvs, count) = castled.generate_all_moves(Colors::BLACK);
+        let queenside_castle = mvs.iter().find(|mv| mv.is_queenside_castle()).unwrap();
+        let kingside_castle = mvs.iter().find(|mv| mv.is_kingside_castle());
+        assert_eq!(kingside_castle, None);  // made illegal by board position
+        let all_castled = castled.play_move(queenside_castle);
+        assert_eq!(all_castled.get_piece(Colors::BLACK, PieceType::KING), map_rank_and_file_to_sq(7, 2));
+        assert_eq!(all_castled.get_piece(Colors::BLACK, PieceType::ROOK), map_rank_and_file_to_sq(7, 3) | map_rank_and_file_to_sq(7, 7));
+        assert!(!all_castled.kingside_castling_rights[Colors::BLACK as usize] && !all_castled.queenside_castling_rights[Colors::BLACK as usize]);
+
+
+        assert_eq!(all_castled.get_piece(Colors::WHITE, PieceType::KING), castled.get_piece(Colors::WHITE, PieceType::KING));
+        assert_eq!(all_castled.get_piece(Colors::WHITE, PieceType::ROOK), castled.get_piece(Colors::WHITE, PieceType::ROOK));
+        assert!(!castled.kingside_castling_rights[Colors::WHITE as usize] && !castled.queenside_castling_rights[Colors::WHITE as usize]);
     }
 
     #[test]
