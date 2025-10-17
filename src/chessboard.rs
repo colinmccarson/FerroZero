@@ -1379,6 +1379,52 @@ mod tests {
         assert_eq!(all_castled.get_piece(Colors::WHITE, PieceType::KING), castled.get_piece(Colors::WHITE, PieceType::KING));
         assert_eq!(all_castled.get_piece(Colors::WHITE, PieceType::ROOK), castled.get_piece(Colors::WHITE, PieceType::ROOK));
         assert!(!castled.kingside_castling_rights[Colors::WHITE as usize] && !castled.queenside_castling_rights[Colors::WHITE as usize]);
+
+        assert_eq!(all_castled.moves_since_takes, 2);
+    }
+
+    #[test]
+    fn test_castling_prevented_attack() {
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [true, false];
+        testboard.queenside_castling_rights = [true, false];
+        testboard.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(0, 4));
+        testboard.set_piece(Colors::WHITE, PieceType::ROOK, map_rank_and_file_to_sq(0, 0) | map_rank_and_file_to_sq(0, 7));
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, map_rank_and_file_to_sq(7, 2) | map_rank_and_file_to_sq(7, 6));
+
+        assert!(!testboard.may_castle_kingside(Colors::WHITE) && !testboard.may_castle_queenside(Colors::WHITE));
+        let (mvs, count) = testboard.generate_all_moves(Colors::WHITE);
+        assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
+
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [false, true];
+        testboard.queenside_castling_rights = [false, true];
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 4));
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, map_rank_and_file_to_sq(7, 0) | map_rank_and_file_to_sq(7, 7));
+        testboard.set_piece(Colors::WHITE, PieceType::QUEEN, map_rank_and_file_to_sq(4, 3));
+        let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
+        assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
+
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [false, true];
+        testboard.queenside_castling_rights = [false, true];
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 4));
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, map_rank_and_file_to_sq(7, 0) | map_rank_and_file_to_sq(7, 7));
+        testboard.set_piece(Colors::WHITE, PieceType::KNIGHT, map_rank_and_file_to_sq(5, 4));
+        let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
+        assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
+
+
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [false, true];
+        testboard.queenside_castling_rights = [false, true];
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(7, 4));
+        testboard.set_piece(Colors::BLACK, PieceType::ROOK, map_rank_and_file_to_sq(7, 0) | map_rank_and_file_to_sq(7, 7));
+        testboard.set_piece(Colors::WHITE, PieceType::ROOK, map_rank_and_file_to_sq(5, 4));
+        assert!(testboard.is_king_in_check(Colors::BLACK));
+        let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
+        assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
+
     }
 
     #[test]
