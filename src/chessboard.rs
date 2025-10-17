@@ -311,6 +311,15 @@ impl Chessboard {
 
     #[inline]
     fn get_combined_pieces(&self, color: Colors) -> u64 {
+        debug_assert_eq!(
+            self.get_piece(color, PieceType::ROOK)
+                & self.get_piece(color, PieceType::KNIGHT)
+                & self.get_piece(color, PieceType::BISHOP)
+                & self.get_piece(color, PieceType::QUEEN)
+                & self.get_piece(color, PieceType::KING)
+                & self.get_piece(color, PieceType::PAWN),
+            0
+        );
         self.get_piece(color, PieceType::ROOK)
             | self.get_piece(color, PieceType::KNIGHT)
             | self.get_piece(color, PieceType::BISHOP)
@@ -1516,5 +1525,20 @@ mod tests {
             assert!(!queenside_castle.is_kingside_castle());
             assert!(queenside_castle.is_castling());
         }
+    }
+
+    #[test]
+    fn test_simple_legal_move_generation() { // TODO test forcing positions
+        let mut testboard = Chessboard::new_blank();
+        testboard.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(1, 6));
+        testboard.set_piece(Colors::BLACK, PieceType::KING, map_rank_and_file_to_sq(6, 1));
+        let (white_mvs, white_count) = testboard.generate_all_moves(Colors::WHITE);
+        assert_eq!(white_mvs.iter().filter(|mv| mv.piece_type == PieceType::KING).count(), 8);
+        assert_eq!(white_mvs.iter().fold(0u64, |x, mv| mv.dest | x), KING_MOVES[testboard.get_piece(Colors::WHITE, PieceType::KING).trailing_zeros() as usize]);
+
+        let nxt_board = testboard.play_move(&white_mvs[0]);
+        let (black_mvs, black_count) = testboard.generate_all_moves(Colors::BLACK);
+        assert_eq!(black_mvs.iter().filter(|mv| mv.piece_type == PieceType::KING).count(), 8);
+        assert_eq!(black_mvs.iter().fold(0u64, |x, mv| mv.dest | x), KING_MOVES[nxt_board.get_piece(Colors::BLACK, PieceType::KING).trailing_zeros() as usize]);
     }
 }
