@@ -637,7 +637,7 @@ impl Chessboard {
     }
 
     // TODO write a MoveArray / ChessboardArray impl
-    pub fn generate_next_legal_boards(&self, color: Colors) -> ([(Chessboard, Move); 256], usize) {
+    pub fn generate_next_legal_boards(&self, color: Colors) -> ([(Chessboard, Move); 256], usize) { // TODO test
         // TODO optimize
         let (mvs, num_legal) = self.generate_all_moves(color);
         let mut ret: [(Chessboard, Move); 256] = [(self.clone(), Move::new_invalid(color)); 256];
@@ -647,8 +647,7 @@ impl Chessboard {
         }
         (ret, num_legal)
     }
-    // TODO insufficient mating material draw condition
-    // TODO castling tests, play castling move
+    // TODO insufficient mating material draw condition, test for this
 
     #[inline]  // TODO check pawn in checkmate
     fn castling_helper(&self, color: Colors, inbetween_mask: u64) -> bool { // TODO this should just use pext and check the each square on the route
