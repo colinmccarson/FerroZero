@@ -201,7 +201,7 @@ impl PossibleMoves {  // TODO just remove this intermediary struct alltogether
     }
     // TODO this is not branchless
     #[inline]
-    pub fn to_moves(&self) -> ([Move; 64], usize) { // TODO handle promotions here
+    pub fn to_moves(&self) -> ([Move; 64], usize) {
         let mut dests = self.dests;
         let mut result: [Move; 64] = [Move::new(self.source, 0u64, PieceType::INVALID, self.color, self.enpassant_takes); 64]; // TODO can definitely avoid some construction here
         let mut i = 0;
@@ -237,7 +237,6 @@ fn get_next_piece_as_u64_and_rm_from_source(source: &mut u64) -> (usize, u64) {
 
 #[derive(Clone, Copy)]
 pub struct Chessboard {
-    // TODO refactor this for [color, piece type] index
     pieces: [[u64; 6]; 2],
     enpassant_takes: u64, // bitboard square that gets set whe na pawn moves 2 squares forwards
     kingside_castling_rights: [bool; 2],
@@ -346,7 +345,7 @@ impl Chessboard {
         all_possible_moves
     }
 
-    fn generate_pseudolegal_black_pawn_moves(&self) -> [PossibleMoves; 8] { // TODO handle promotions, fix en passant
+    fn generate_pseudolegal_black_pawn_moves(&self) -> [PossibleMoves; 8] {
         let white_occ = self.get_combined_pieces(Colors::WHITE);
         let all_occ = self.get_combined_pieces(Colors::BLACK) | white_occ;
         let mut source = self.get_piece(Colors::BLACK, PieceType::PAWN);
@@ -371,7 +370,7 @@ impl Chessboard {
         let mask = ROOK_MOVES_NO_RAY_ENDS[sq_ind];
         let needs_pext = ((mask & total_occ) != 0) as usize;
         let pext = unsafe { _pext_u64(total_occ, mask) } as usize;
-        let result = [ROOK_MOVES[sq_ind], ROOK_PEXT_TABLE[sq_ind][pext]];  // TODO when pext is zero, should just be ROOK_MOVES
+        let result = [ROOK_MOVES[sq_ind], ROOK_PEXT_TABLE[sq_ind][pext]];  // TODO write a test that checks ROOK_PEXT_TABLE[x][0] = ROOK_MOVES[x] and remove this check, same for other PEXT tables
         result[needs_pext] & !own_occ
     }
 
@@ -513,22 +512,21 @@ impl Chessboard {
 
         // Handle castling
         // for castling, the above does nothing. for not castling, the below does nothing.
-        // TODO verify that rook square is empty in castle legality check
 
         nxt_board.set_piece(mv.color, PieceType::KING, branchless_select(mv.is_castling(), nxt_board.get_piece(mv.color, PieceType::KING), mv.king_to));
         nxt_board.set_piece(mv.color, PieceType::ROOK, mv.rook_to_from ^ nxt_board.get_piece(mv.color, PieceType::ROOK)); // Move.rook_to_from is only nonzero for castling; castling moves are only generated when castling is legal
         // Update castling rights
-        let king_start = branchless_select(mv.color == Colors::WHITE, 0b00001000 << 56, 0b00001000);
         let kingside_rook_start = branchless_select(mv.color == Colors::WHITE, 0b1 << 56, 0b1);
         let kingside_rights = self.kingside_castling_rights[mv.color as usize];
         let queenside_rook_start = branchless_select(mv.color == Colors::WHITE, 0b10000000 << 56, 0b10000000);
         let queenside_rights = self.queenside_castling_rights[mv.color as usize];
 
-        let kingside_condition = kingside_rights && (((mv.piece_type == PieceType::ROOK) && ((mv.source & kingside_rook_start) > 0)) || ((mv.piece_type == PieceType::KING) && ((mv.source & king_start) > 0)));
-        let queenside_condition = queenside_rights && (((mv.piece_type == PieceType::ROOK) && ((mv.source & queenside_rook_start) > 0)) || ((mv.piece_type == PieceType::KING) && ((mv.source & king_start) > 0)));
+        let kingside_condition = ((mv.piece_type == PieceType::ROOK) && ((mv.source & kingside_rook_start) > 0)) || (mv.piece_type == PieceType::KING);
+        let queenside_condition = ((mv.piece_type == PieceType::ROOK) && ((mv.source & queenside_rook_start) > 0)) || (mv.piece_type == PieceType::KING);
 
-        nxt_board.kingside_castling_rights[mv.color as usize] = branchless_select(kingside_condition | mv.is_castling(), kingside_rights as u64, false as u64) != 0;
-        nxt_board.queenside_castling_rights[mv.color as usize] = branchless_select(queenside_condition | mv.is_castling(), queenside_rights as u64, false as u64) != 0; // TODO write test to verify this updates correctly
+        nxt_board.kingside_castling_rights[mv.color as usize] &= branchless_select(kingside_condition, kingside_rights as u64, false as u64) != 0;
+        nxt_board.queenside_castling_rights[mv.color as usize] &= branchless_select(queenside_condition, queenside_rights as u64, false as u64) != 0; // TODO write test to verify this updates correctly
+        debug_assert_eq!(nxt_board.get_combined_pieces(Colors::WHITE) & nxt_board.get_combined_pieces(Colors::BLACK), 0);
 
         nxt_board
     }
@@ -1384,7 +1382,7 @@ mod tests {
     }
 
     #[test]
-    fn test_castling_prevented_attack() {
+    fn test_attack_along_path_prevents_castling() {
         let mut testboard = Chessboard::new_blank();
         testboard.kingside_castling_rights = [true, false];
         testboard.queenside_castling_rights = [true, false];
@@ -1424,7 +1422,42 @@ mod tests {
         assert!(testboard.is_king_in_check(Colors::BLACK));
         let (mvs, count) = testboard.generate_all_moves(Colors::BLACK);
         assert_eq!(mvs.iter().find(|mv| mv.is_castling()), None);
+    }
 
+    #[test]
+    fn test_moving_king_or_rook_prevents_castling() {
+        let mut testboard = Chessboard::new_blank();
+        testboard.kingside_castling_rights = [true, false];
+        testboard.queenside_castling_rights = [true, false];
+        testboard.set_piece(Colors::WHITE, PieceType::KING, map_rank_and_file_to_sq(0, 4));
+        testboard.set_piece(Colors::WHITE, PieceType::ROOK, map_rank_and_file_to_sq(0, 0) | map_rank_and_file_to_sq(0, 7));
+        let (mvs, count) = testboard.generate_all_moves(Colors::WHITE);
+
+        for non_castling_mv in mvs.iter().filter(|mv| !mv.is_castling() && mv.piece_type == PieceType::KING) {
+            let moved_king = testboard.play_move(non_castling_mv);
+            assert!(!moved_king.may_castle_queenside(Colors::WHITE) && !moved_king.may_castle_kingside(Colors::WHITE));
+            assert!(!moved_king.kingside_castling_rights[Colors::WHITE as usize]);
+            let (nxt_mvs, nxt_count) = moved_king.generate_all_moves(Colors::WHITE);
+            assert_eq!(nxt_mvs.iter().find(|mv| mv.is_castling()), None);
+        }
+
+        for kingside_rook_mv in mvs.iter().filter(|mv| mv.piece_type == PieceType::ROOK && mv.source == map_rank_and_file_to_sq(0, 7)) {
+            let moved_rook = testboard.play_move(kingside_rook_mv);
+            assert!(!moved_rook.may_castle_kingside(Colors::WHITE));
+            assert!(moved_rook.may_castle_queenside(Colors::WHITE));
+            let (nxt_mvs, count) = moved_rook.generate_all_moves(Colors::WHITE);
+            assert_eq!(nxt_mvs.iter().find(|mv| mv.is_kingside_castle()), None);
+            assert_ne!(nxt_mvs.iter().find(|mv| mv.is_queenside_castle()), None);
+        }
+
+        for queenside_rook_mv in mvs.iter().filter(|mv| mv.piece_type == PieceType::ROOK && mv.source == map_rank_and_file_to_sq(0, 0)) {
+            let moved_rook = testboard.play_move(queenside_rook_mv);
+            assert!(moved_rook.may_castle_kingside(Colors::WHITE));
+            assert!(!moved_rook.may_castle_queenside(Colors::WHITE));
+            let (nxt_mvs, count) = moved_rook.generate_all_moves(Colors::WHITE);
+            assert_eq!(nxt_mvs.iter().find(|mv| mv.is_queenside_castle()), None);
+            assert_ne!(nxt_mvs.iter().find(|mv| mv.is_kingside_castle()), None);
+        }
     }
 
     #[test]
