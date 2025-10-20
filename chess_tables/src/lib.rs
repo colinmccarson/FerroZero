@@ -124,7 +124,7 @@ mod tests {
             let sq = 1u64 << i;
             for _ in 0..20 {
                 let occ_bits: u64 = rng.random::<u64>() & mask;
-                let needs_pext = ((mask & occ_bits) != 0) as usize; // TODO wrong; mask needs to be not including the ends of rays
+                let needs_pext = ((mask & occ_bits) != 0) as usize;
                 if needs_pext == 0 {
                     continue;
                 }
@@ -142,6 +142,32 @@ mod tests {
                 assert_eq!(resulting_rays, expected);
             }
         }
+    }
+
+    #[test]
+    fn test_on_edge_regression_rook_pext() {
+        // regression test responding to the chessboard::tests::test_forcing_sequence failure
+        let black_king_loc = 0x400000000000000u64;
+        let black_king_ind = black_king_loc.trailing_zeros() as usize; // king on F8
+        let total_occ = 18294229278493034473u64;
+        let own_occ = 18222171641234849792u64;
+        let mask = ROOK_MOVES_NO_RAY_ENDS[black_king_ind];
+        let pext_result = unsafe { _pext_u64(total_occ, mask) } as usize;
+        let rays = ROOK_PEXT_TABLE[black_king_ind][pext_result];
+        assert_eq!(rays & !own_occ, 0x304040404040400);
+    }
+
+    #[test]
+    fn test_bishop_pext_example() {
+        let total_occ = 0x440010000200202u64;
+        let own_occ = 0x10000000202u64;
+        let bishop_sq = 0x2000000000000u64;
+        let sq_ind = bishop_sq.trailing_zeros() as usize;
+        let mask = BISHOP_MOVES[sq_ind];
+        let pext_result = unsafe { _pext_u64(total_occ, mask & !BOARD_EDGES) } as usize;
+        let rays = BISHOP_PEXT_TABLE[sq_ind][pext_result];
+        let bf = brute_force_bishop_attack(1 << sq_ind, total_occ);
+        assert_eq!(rays & !own_occ, 0x500040810200000u64);
     }
 
     #[test]
