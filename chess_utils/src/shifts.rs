@@ -1,29 +1,30 @@
 use crate::consts::*;
+use crate::utils::branchless_select;
 
 
 #[inline(always)]
 pub const fn increment_rank(source: u64, num_ranks: u64) -> u64 {
-    (!RANK_8 & source) << (num_ranks << 3)
+    branchless_select(num_ranks == 0, (!RANK_8 & source) << (num_ranks << 3), source)
 }
 
 
 #[inline(always)]
 pub const fn decrement_rank(source: u64, num_ranks: u64) -> u64 {
-    (!RANK_1 & source) >> (num_ranks << 3)
+    branchless_select(num_ranks == 0, (!RANK_1 & source) >> (num_ranks << 3), source)
 }
 
 
 #[inline(always)]
 pub const fn move_right(source: u64, num_files: u64) -> u64 {
     let row = 0xFFu64 << (((source.trailing_zeros() & 0x3F) >> 3) << 3);
-    (source >> num_files) & row
+    branchless_select(num_files == 0, (source >> num_files) & row, source)
 }
 
 
 #[inline(always)]
 pub const fn move_left(source: u64, num_files: u64) -> u64 {
     let row = 0xFFu64 << (((source.trailing_zeros() & 0x3F) >> 3) << 3);
-    (source << num_files) & row
+    branchless_select(num_files == 0, (source << num_files) & row, source)
 }
 
 

@@ -1,6 +1,3 @@
-#[allow(long_running_const_eval)]
-use unroll::unroll_for_loops;
-
 use crate::consts;
 use crate::shifts;
 
@@ -245,4 +242,15 @@ pub fn get_all_individual_sq(mut board: u64) -> Vec<u64> {
         ret.push(sq);
     }
     ret
+}
+
+#[inline(always)]
+pub const fn bool_to_mask(b: bool) -> u64 {
+    -(b as i64) as u64
+}
+
+#[inline(always)]
+pub const fn branchless_select(b: bool, if_false: u64, if_true: u64) -> u64 {  // TODO use this everywhere possible
+    let m = bool_to_mask(b);
+    (if_false & !m) | (if_true & m)
 }
