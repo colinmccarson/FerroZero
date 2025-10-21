@@ -1604,4 +1604,6 @@ mod tests {
         let queen_g7_mate = nxt_boards.iter().find(|(board, mv)| mv.piece_type == PieceType::QUEEN && mv.dest == map_rank_and_file_to_sq(6, 6)).unwrap().0;
         assert!(queen_g7_mate.king_is_checkmated(Colors::BLACK));
     }
+    // TODO pin tests, other common chess tactical themes
+    // TODO impl irreversible flag for draw look-back
 }
