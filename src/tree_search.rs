@@ -1,9 +1,7 @@
 use std::rc::Rc;
 
 use futures;
-use tch::Tensor;
 use tokio;
-
 use crate::chessboard::Chessboard;
 use crate::chessboard::Move;
 use crate::chessboard::Colors;
@@ -31,36 +29,40 @@ pub struct ChessTree {
 
 
 pub struct ExpandedPositionNode {
-    tree: std::rc::Rc<ChessTree>,
+    tree: Rc<ChessTree>,
     index: usize,
     parent: usize,  // root when index == parent
-    action: Move,
+    action: Option<Move>, // action taken to reach this node from the parent
     chessboard: Chessboard,
     value_sum: f64,
     visit_count: u32,
     probability: f64,  // assigned on node expansion
     children: PositionIndexArray,
     color_to_play: Colors,
-    deferred_value: Option<f64>,
-    deferred_probability: Option<f64>,
+    priors: PositionPrior,
 }
 
 impl ExpandedPositionNode {
-    pub fn make_root() {
-        // TODO
+    pub fn from_deferred_node(deferred_node: DeferredPositionNode) -> PositionNode {
+        let tree = deferred_node.tree.clone();
+        let ind = deferred_node.index;
+        let me = ExpandedPositionNode {
+            tree: deferred_node.tree,
+            index: deferred_node.index,
+            parent: deferred_node.parent,
+            action: deferred_node.action,
+            chessboard: deferred_node.chessboard,
+            value_sum: deferred_node.deferred_value,
+            visit_count: 1,
+            probability: deferred_node.probability,
+            children: PositionIndexArray::new(),
+            color_to_play: deferred_node.color_to_play,
+            priors: deferred_node.deferred_priors, // TODO fix, this might need to be async
+        };
+        tree.arena[ind] = PositionNode::Expanded(me);
+        tree.arena[ind]
     }
-    pub fn new(root_index: usize, index: usize, parent: usize, action: Move, chessboard: Chessboard, color_to_play: Colors) -> ExpandedPositionNode {
-        ExpandedPositionNode {
-            index,
-            action,
-            chessboard,
-            value_sum: None,
-            visit_count: 0u32,
-            children: Vec::new(),
-            probability: None,
-            color_to_play
-        }
-    }
+
     fn mean_action_value_from_s(&self) -> f64 {
         self.value_sum / (self.visit_count as f64)
     }
@@ -102,15 +104,26 @@ pub struct DeferredPositionNode {
     tree: Rc<ChessTree>,
     index: usize,
     parent: usize,
-    action: Move,
+    action: Option<Move>,
     chessboard: Chessboard,
-    deferred_value: f64,
-    deferred_priors: PositionPrior,
+    inference_result: tokio::task::JoinHandle<PositionInferenceResult>,
     probability: f64,  // from parent
     color_to_play: Colors,
 }
 
 impl DeferredPositionNode {
+    pub async fn new_game_root(tree: Rc<ChessTree>, priors: PositionPrior) -> DeferredPositionNode { // TODO game root is deferred!
+        DeferredPositionNode {
+            tree,
+            index: 0,
+            parent: 0,
+            action: None,
+            chessboard: Chessboard::new(),
+            inference_result: tokio::task::spawn(), // TODO inference
+            probability: 1f64,
+            color_to_play: Colors::WHITE,
+        } // TODO will spawn every inference task so it starts running and await on rollout()
+    }
 
     pub fn to_tensor(&self) -> ChessInferenceTensor {
         let meta = self.chessboard.to_mv_metadata_tensor(self.color_to_play, self.tree.total_move_count);

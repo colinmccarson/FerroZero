@@ -43,17 +43,30 @@ impl PositionPrior {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 
+    fn tens_idx_from_mv(mv: &Move) -> (i32, i32, i32) {
+        let (i, j) = map_sq_to_8x8_plane_idx(mv.get_src());
+        let dir = get_direction_to_target(mv.get_src(), mv.get_dest()).unwrap();
+        let distance = get_distance_in_direction_not_zero(mv.get_src(), mv.get_dest(), dir.clone());
+        (i, j, 8 * (dir as i32) + distance)
+    }
+
     pub fn to_probs(&self, legal_mvs: &Array<Move, 256>) -> Array<f64, 256> {
         let mut probs: Array<f64, 256> = Array::new();
         for mv in legal_mvs {
-            let (i, j) = map_sq_to_8x8_plane_idx(mv.get_src());
-            let dir = get_direction_to_target(mv.get_src(), mv.get_dest()).unwrap();
-            let distance = get_distance_in_direction_not_zero(mv.get_src(), mv.get_dest(), dir.clone());
-            let pidx = 8 * (dir as i32) + distance;
+            let (i, j, pidx) = Self::tens_idx_from_mv(mv);
             let prob: f64 = self.0.double_value(&[i as i64, j as i64, pidx as i64]);
             probs.push(prob);
         }
         probs
+    }
+
+    pub fn get_legal_inds(&self, legal_mvs: &Array<Move, 256>) -> Array<(i32, i32, i32), 256> {
+        let mut inds: Array<(i32, i32, i32), 256> = Array::new();
+        for mv in legal_mvs {
+            let ind = Self::tens_idx_from_mv(mv);
+            inds.push(ind);
+        }
+        inds
     }
 }
 
