@@ -1,4 +1,5 @@
 use crate::consts;
+use crate::consts::DIRECTIONS;
 use crate::shifts;
 
 
@@ -253,4 +254,55 @@ pub const fn bool_to_mask(b: bool) -> u64 {
 pub const fn branchless_select(b: bool, if_false: u64, if_true: u64) -> u64 {  // TODO use this everywhere possible
     let m = bool_to_mask(b);
     (if_false & !m) | (if_true & m)
+}
+
+/// Panics for invalid src, dest combination (e.g. knight src, dest)
+#[inline]
+pub fn get_distance_in_direction_not_zero(src: u64, dest: u64, dir: DIRECTIONS) -> i32 {
+    let src_rank = get_rank_index(src).unwrap() as i32;
+    let src_file = get_file_index(src).unwrap() as i32;
+    let dest_rank = get_rank_index(dest).unwrap() as i32;
+    let dest_file = get_file_index(dest).unwrap() as i32;
+    match dir {
+        DIRECTIONS::N => {
+            assert_eq!(src_file, dest_file);
+            assert!(src_rank < dest_rank);
+            dest_rank - src_rank
+        }
+        DIRECTIONS::NE => {
+            assert!(dest_rank > src_rank && dest_file > src_file);
+            assert_eq!(dest_rank - src_rank, dest_file - src_file);
+            dest_rank - src_rank
+        }
+        DIRECTIONS::E => {
+            assert_eq!(src_rank, dest_rank);
+            assert!(dest_file > src_file);
+            dest_file - src_file
+        }
+        DIRECTIONS::SE => {
+            assert!(src_rank > dest_rank && dest_file > src_file);
+            assert_eq!(src_rank - dest_rank, dest_file - src_file);
+            src_rank - dest_rank
+        }
+        DIRECTIONS::S => {
+            assert_eq!(src_file, dest_file);
+            assert!(src_rank > dest_rank);
+            src_rank - dest_rank
+        }
+        DIRECTIONS::SW => {
+            assert_eq!(src_rank - dest_rank, src_file - dest_file);
+            assert!(src_rank > dest_rank && src_file > dest_file);
+            src_rank - dest_rank
+        }
+        DIRECTIONS::W => {
+            assert_eq!(src_rank, dest_rank);
+            assert!(src_file > dest_file);
+            src_file - dest_file
+        }
+        DIRECTIONS::NW => {
+            assert_eq!(dest_rank - src_rank, src_file - dest_file);
+            assert!(dest_rank > src_rank && src_file > dest_file);
+            dest_rank - src_rank
+        }
+    }
 }

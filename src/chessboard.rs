@@ -1,8 +1,14 @@
 use core::arch::x86_64::_pext_u64;
+
+use tch;
+
 use chess_tables;
 use chess_utils::consts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
+
+use crate::inference_primitives::{MoveMetadataTensor, PlaneMaskTensor};
+use crate::inference_primitives::MoveTensor;
 
 
 #[repr(usize)]
@@ -92,6 +98,16 @@ impl Move {
     #[inline]
     pub fn new_invalid(color: Colors) -> Move {
         Move { source: 0, dest: 0, piece_type: PieceType::INVALID, color: color, enpassant_to: 0, rook_to_from: 0, king_to: 0, promotion: PieceType::INVALID }
+    }
+
+    #[inline]
+    pub fn get_src(&self) -> u64 {
+        self.source
+    }
+
+    #[inline]
+    pub fn get_dest(&self) -> u64 {
+        self.dest
     }
 
     #[inline]
@@ -726,6 +742,43 @@ impl Chessboard {
             || (white_king_bishop && black_king_knight)
             || (white_king_knight && black_king_bishop)
             || self.moves_since_takes == 50
+    }
+
+    /// Gets the piece bitboard, oriented such that the bottom is the player to play
+    fn get_oriented_piece(&self, color_to_play: Colors, color: Colors, piece_type: PieceType) -> u64 {
+        branchless_select(color_to_play == Colors::BLACK, self.get_piece(color, piece_type), self.get_piece(color, piece_type).reverse_bits())
+    }
+
+    pub fn get_no_progress_count(&self) -> i32 {
+        self.moves_since_takes
+    }
+
+    /// Returns the 8x8x119 tensor for the move. color is 'P1' from the paper, i.e. player to move
+    pub fn to_mv_tensor(&self, color: Colors, repetition_count: u32) -> MoveTensor {
+        let mut tens = MoveTensor::default();
+        // fill piece layers, subject to player orientation
+        let mut offset = 0;
+        for i in 0..6usize {
+            tens.set_plane_with_bitboard(i, self.get_oriented_piece(color, color, PieceType::from_usize(i)), 1f64);
+        }
+        offset += 6;
+        for i in 0..6usize {
+            tens.set_plane_with_bitboard(offset + i, self.get_oriented_piece(color, Colors::opposite_color(color), PieceType::from_usize(i)), 1f64);
+        }
+        offset += 6;
+        for i in 0..2usize {
+            tens.set_plane_with_bitboard(offset + i, u64::MAX, ((repetition_count as usize) > i) as u32 as f64);
+        }
+        tens
+    }
+
+    pub fn to_mv_metadata_tensor(&self, color: Colors, total_move_count: u32) -> MoveMetadataTensor {
+        let mut tens = MoveMetadataTensor::new_zeros();
+        tens.set_color(color);
+        tens.set_castling(self, color);
+        tens.set_noprogress_count(self.moves_since_takes);
+        tens.set_total_move_count(total_move_count);
+        tens
     }
 }
 
