@@ -59,6 +59,11 @@ impl PositionPrior {
         }
         probs
     }
+    
+    pub fn to_prob(&self, mv: &Move) -> f64 {
+        let (i, j, pidx) = Self::tens_idx_from_mv(mv);
+        self.0.double_value(&[i as i64, j as i64, pidx as i64])
+    }
 
     pub fn get_legal_inds(&self, legal_mvs: &Array<Move, 256>) -> Array<(i32, i32, i32), 256> {
         let mut inds: Array<(i32, i32, i32), 256> = Array::new();
@@ -71,12 +76,22 @@ impl PositionPrior {
 }
 
 pub struct PositionInferenceResult {
-    prior: PositionPrior,
+    priors: PositionPrior,
     value: f64,
 }
 
 impl PositionInferenceResult {
-    // TODO
+    pub fn get_priors(&self) -> PositionPrior {
+        self.priors
+    }
+
+    pub fn get_value(&self) -> f64 {
+        self.value
+    }
+
+    pub fn from_chessboard(board: Chessboard) -> PositionInferenceResult {
+        todo!() // TODO inference
+    }
 }
 
 pub struct PlaneMaskTensor(tch::Tensor);

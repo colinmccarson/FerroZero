@@ -1,14 +1,17 @@
 use core::arch::x86_64::_pext_u64;
 
 use tch;
+use tokio;
 
 use chess_tables;
 use chess_utils::consts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
 
-use crate::inference_primitives::{MoveMetadataTensor, PlaneMaskTensor};
-use crate::inference_primitives::MoveTensor;
+use crate::inference_primitives::{MoveMetadataTensor, MoveTensor};
+use crate::datastructures::Array;
+
+type MoveList = Array<Move, 256>;
 
 
 #[repr(usize)]
@@ -661,7 +664,23 @@ impl Chessboard {
         (self.get_piece(Colors::BLACK, PieceType::KING) | self.get_piece(Colors::WHITE, PieceType::KING)).count_ones() == 2
     }
 
-    // TODO write a MoveArray / ChessboardArray impl
+    // TODO optimize check checking to reduce branching
+    // TODO only need single branch for rare doublecheck; can predict taken for most things
+    pub fn generate_legal_moves(&self, color: Colors) -> MoveList {
+        let (mvs, num_pseudo_legal) = self.generate_all_pseudolegal_moves(color);
+        let mut ret = MoveList::new();
+        for i in 0..num_pseudo_legal {
+            let board = self.play_move(&mvs[i]);
+            let is_legal = !board.is_king_in_check(color);
+            if is_legal {
+                ret.push(mvs[i]);
+            }
+        }
+        ret
+    }
+
+    // TODO convert all to move lists
+    // TODO consider rm below func
     pub fn generate_next_legal_boards(&self, color: Colors) -> ([(Chessboard, Move); 256], usize) { // TODO test
         // TODO optimize
         // TODO branchless select utility for moves
@@ -724,7 +743,7 @@ impl Chessboard {
     }
 
     #[inline]
-    pub fn is_draw(&self) -> bool {  // TODO doesn't capture 3-fold repetition, this should be handled by the parent context
+    pub fn is_draw_by_insufficient_material_or_50_move_rule(&self) -> bool {  // TODO doesn't capture 3-fold repetition, this should be handled by the parent context
         let white_lone_king = self.get_combined_pieces(Colors::WHITE) == self.get_piece(Colors::WHITE, PieceType::KING);
         let black_lone_king = self.get_combined_pieces(Colors::BLACK) == self.get_piece(Colors::BLACK, PieceType::KING);
         let white_king_bishop = self.get_combined_pieces(Colors::WHITE) == (self.get_piece(Colors::WHITE, PieceType::BISHOP) | self.get_piece(Colors::WHITE, PieceType::KING)) && self.get_piece(Colors::WHITE, PieceType::BISHOP).count_ones() == 1;

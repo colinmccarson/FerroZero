@@ -150,3 +150,51 @@ impl<T, const N: usize> IndexMut<usize> for RingBuffer<T, N> {
         self.arr[(self.head + index) % N]
     }
 }
+
+
+pub struct Arena<T> {
+    arena: Vec<Option<T>>,
+    free: Vec<usize>,
+    size: usize,
+}
+
+impl<T> Arena<T> {
+    pub fn new() -> Self {
+        Self { arena: Vec::new(), free: Vec::new(), size: 0 }
+    }
+
+    pub fn push(&mut self, item: T) -> usize {
+        if self.free.len() > 0 {
+            let ind = self.free.pop().unwrap();
+            self.arena[ind] = Some(item);
+            self.size += 1;
+            ind
+        }
+        else {
+            let ind = self.arena.len();
+            self.arena.push(Some(item));
+            self.size += 1;
+            ind
+        }
+    }
+
+    pub fn pop(&mut self, index: usize) -> T {
+        let ret = self.arena[index].take().unwrap();
+        self.free.push(index);
+        self.size -= 1;
+        ret
+    }
+
+    pub fn get(&self, index: usize) -> Option<&T> {
+        self.arena[index].as_ref()
+    }
+
+    pub fn get_mut(&self, index: usize) -> Option<&mut T> {
+        self.arena[index].as_mut()
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+}
