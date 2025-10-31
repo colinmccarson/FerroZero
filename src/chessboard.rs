@@ -88,14 +88,14 @@ pub struct Move {
     enpassant_to: u64,
     rook_to_from: u64, // castling use only
     king_to: u64, //castling use only
-    promotion: PieceType
+    promotion: PieceType,
 } // TODO compress into single u64
 
 
 impl Move {
     #[inline]
     pub fn new(source: u64, dest: u64, piece_type: PieceType, color: Colors, enpassant_to: u64) -> Move {
-        Move { source, dest, piece_type, color, enpassant_to, rook_to_from: 0, king_to: 0 , promotion: PieceType::INVALID}
+        Move { source, dest, piece_type, color, enpassant_to, rook_to_from: 0, king_to: 0 , promotion: PieceType::INVALID }
     }
 
     #[inline]
@@ -259,9 +259,20 @@ pub struct Chessboard {
     kingside_castling_rights: [bool; 2],
     queenside_castling_rights: [bool; 2],
     moves_since_takes: i32, // 50 move rule
+    enp_file: [bool; 8],
 }
 
-impl Chessboard {
+impl PartialEq for Chessboard {
+    /// Returns True if the boards are equal in the FIDE senses (for repetition checking)
+    fn eq(&self, other: &Chessboard) -> bool {
+        self.pieces == other.pieces
+            && self.kingside_castling_rights == other.kingside_castling_rights
+            && self.queenside_castling_rights == other.queenside_castling_rights
+            && self.enp_file == other.enp_file
+    }
+}
+
+impl Chessboard { // TODO zobrist hashing
     /**
     Board convention is: rank = floor(log8(loc)), file = log2(loc - floor(loc8(loc)))
     **/
@@ -303,6 +314,7 @@ impl Chessboard {
             kingside_castling_rights: [true, true],
             queenside_castling_rights: [true, true],
             moves_since_takes: 0,
+            enp_file: [true; 8],
         }
     }
 
@@ -313,6 +325,7 @@ impl Chessboard {
             kingside_castling_rights: [false, false],
             queenside_castling_rights: [false, false],
             moves_since_takes: 0,
+            enp_file: [false; 8],
         }
     }
 
@@ -530,7 +543,9 @@ impl Chessboard {
         for pt in 0usize..6 { // does nothing if enpassant or castling
             nxt_board.pieces[other_color as usize][pt] &= !mv.dest; // if enpassant or castling, this isn't set
         }
-        nxt_board.moves_since_takes += 1 - ((self.get_combined_pieces(other_color).count_ones() as i32) - (nxt_board.get_combined_pieces(other_color).count_ones() as i32));
+
+        let is_takes = self.get_combined_pieces(other_color).count_ones() > nxt_board.get_combined_pieces(other_color).count_ones();
+        nxt_board.moves_since_takes = branchless_select(is_takes, (self.moves_since_takes + 1) as u64, 0) as i32;
         // move piece / promotion handling
         let piece_type_ind = branchless_select(mv.promotion != PieceType::INVALID, mv.piece_type as u64, mv.promotion as u64) as usize;
         nxt_board.pieces[mv.color as usize][piece_type_ind] |= mv.dest;
@@ -798,6 +813,14 @@ impl Chessboard {
         tens.set_noprogress_count(self.moves_since_takes);
         tens.set_total_move_count(total_move_count);
         tens
+    }
+
+    #[inline]
+    pub fn position_is_reversible(&self, reached_with: &Move, last_pos: &Chessboard) -> bool {
+        (reached_with.piece_type == PieceType::PAWN)
+            && (self.moves_since_takes > 0)
+            && (self.may_castle_queenside(reached_with.color) == last_pos.may_castle_queenside(reached_with.color))
+            && (self.may_castle_kingside(reached_with.color) == last_pos.may_castle_kingside(reached_with.color))
     }
 }
 

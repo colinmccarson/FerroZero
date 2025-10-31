@@ -101,7 +101,7 @@ impl<T, const N: usize> RingBuffer<T, N> {
     pub fn new() -> Self {
         Self { arr: Array::new(), head: 0usize, tail: 0, size: 0 }
     }
-    
+
     /// Returns true if the ringbuffer head was overwritten
     pub fn push_with_overwrite(&mut self, item: T) -> bool {
         if self.size == N {
@@ -128,6 +128,17 @@ impl<T, const N: usize> RingBuffer<T, N> {
 
     pub fn len(&self) -> usize {
         self.size
+    }
+
+    pub fn fill(&mut self, value: T) where T: Clone {
+        for i in 0..self.arr.len() {
+            self.arr[i] = value.clone();
+        }
+        for i in self.arr.len()..self.size {
+            self.arr.push(value.clone());
+        }
+        self.head = 0;
+        self.tail = N - 1;
     }
 }
 

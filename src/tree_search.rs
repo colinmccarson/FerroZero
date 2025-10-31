@@ -12,8 +12,6 @@ use crate::datastructures::*;
 use crate::inference_primitives::*;
 
 
-
-
 pub enum TerminalState {
     WIN,
     LOSS,
@@ -25,13 +23,13 @@ pub enum TerminalState {
 pub struct ChessTree {
     expanded_arena: Arena<ExpandedPositionNode>,  // re-rooting drops children,
     deferred_arena: Arena<DeferredPositionNode>, // TODO subtree block arenas
-    history: RingBuffer<Chessboard, 7>,
+    history: Vec<Chessboard>,  // TODO update tensor creation for full history
     total_move_count: u32,
     rt: tokio::runtime::Runtime,
 }
 
 
-pub struct ExpandedPositionNode {
+struct ExpandedPositionNode {
     index: usize,
     parent: usize,  // root when index == parent
     action: Option<Move>, // action taken to reach this node from the parent
@@ -104,7 +102,7 @@ impl ExpandedPositionNode {
 
 }
 
-pub struct DeferredPositionNode {
+struct DeferredPositionNode {
     index: usize,
     parent: usize,
     action: Option<Move>,
@@ -160,8 +158,12 @@ impl DeferredPositionNode {
             cur = &cur.get_parent();
             history_count -= 1;
         }
-        for i in 0..history_count {
+        for i in 0..std::cmp::min(history_count, tree.history.len()) {
             mvs.push(tree.history[tree.history.len() - 1 - i].to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
+            history_count -= 1;
+        }
+        for i in 0..history_count {
+            todo!() // TODO push blank tensors
         }
         ChessInferenceTensor::new(mvs.as_raw(), meta)
     }
@@ -199,7 +201,7 @@ impl ChessTree {
         let mut me = ChessTree {
             expanded_arena: Arena::new(),
             deferred_arena: Arena::new(),
-            history: RingBuffer::new(),
+            history: Vec::new(),
             total_move_count: 0,
             rt: tokio::runtime::Runtime::new().unwrap(),
         };
@@ -213,24 +215,25 @@ impl ChessTree {
 
     pub fn reroot(&mut self, temperature: f64) {
         // TODO also have a reroot method which maintains the explored subtree
+        // TODO send node board, value, and probabilities to replay buffer
         let root = self.get_root();
+        let probs = self.get_action_probabilities(temperature);
         let next_root = if temperature <= 1e-9 {
             root.children.iter().map(|&i| self.expanded_arena.get(i).unwrap()).max_by_key(|&x| x.visit_count).unwrap()
         } else {
-            let probs = self.get_action_probabilities(temperature);
             let mut rng = rng();
             let dist = WeightedIndex::new(&probs).unwrap();
             let child_index = dist.sample(&mut rng);
             let global_index = root.children[child_index];
             self.expanded_arena.get(global_index).unwrap()
         };
-        self.history.push_with_overwrite(root.chessboard);
+        self.history.push(root.chessboard);
         self.deferred_arena = Arena::new();
         self.expanded_arena = Arena::new();
         self.expanded_arena.push(*next_root.clone());
     }
 
-    pub fn get_repetition_count(&self, board: &Chessboard) -> u32 {
+    fn get_repetition_count(&self, board: &Chessboard) -> u32 {
         todo!()
     }
 
@@ -239,7 +242,7 @@ impl ChessTree {
         self.get_root().children.iter().map(|&i| (self.expanded_arena.get(i).unwrap().visit_count as f64).powf(1f64 / temperature) / total).collect()
     }
 
-    pub fn select_child(&self, cur: &ExpandedPositionNode) -> Result<&ExpandedPositionNode, usize> {
+    fn select_child(&self, cur: &ExpandedPositionNode) -> Result<&ExpandedPositionNode, usize> {
         let best_expanded_child = cur.children.iter().map(|&i| self.expanded_arena.get(i).unwrap()).reduce(|x, y| {
             if x.ucb() > y.ucb() { x } else { y }
         });
@@ -266,6 +269,12 @@ impl ChessTree {
                     return;
                 }
             }
+        }
+    }
+
+    pub fn simulate(&mut self, num_simulations: u32) {
+        for i in 0..num_simulations {
+            self.select_and_rollout()
         }
     }
 
