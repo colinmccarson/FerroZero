@@ -2,6 +2,9 @@ use std::collections::HashSet;
 
 use futures;
 use tokio;
+use rand::prelude::*;
+use rand::distr::weighted::WeightedIndex;
+use rand::rng;
 use crate::chessboard::Chessboard;
 use crate::chessboard::Move;
 use crate::chessboard::Colors;
@@ -21,7 +24,7 @@ pub enum TerminalState {
 // Core idea is same as usual MCTS but replacing rollout with NN eval
 pub struct ChessTree {
     expanded_arena: Arena<ExpandedPositionNode>,  // re-rooting drops children,
-    deferred_arena: Arena<DeferredPositionNode>,
+    deferred_arena: Arena<DeferredPositionNode>, // TODO subtree block arenas
     history: RingBuffer<Chessboard, 7>,
     total_move_count: u32,
     rt: tokio::runtime::Runtime,
@@ -44,7 +47,8 @@ pub struct ExpandedPositionNode {
 
 impl ExpandedPositionNode {
     /// The expectation is that this function is called with the popped deferred node
-    fn from_deferred_node_and_push(tree: &mut ChessTree, deferred_node: DeferredPositionNode) -> usize {
+    /// Inserts the node into the tree and returns a reference
+    fn from_deferred_node_and_push(tree: &mut ChessTree, deferred_node: DeferredPositionNode) -> &ExpandedPositionNode {
         let inference_result = tree.block_on(deferred_node.inference_result).unwrap();
         let me = ExpandedPositionNode {
             index: 0, // set correctly below
@@ -62,7 +66,7 @@ impl ExpandedPositionNode {
         me.get_parent_mut(tree).deferred_children.remove(&deferred_node.index);
         let ind = tree.expanded_arena.push(me);
         tree.expanded_arena.get_mut(ind).unwrap().index = ind;
-        ind
+        tree.expanded_arena.get(ind).unwrap()
     }
 
     fn is_root(&self) -> bool {
@@ -74,9 +78,6 @@ impl ExpandedPositionNode {
     }
 
     pub fn ucb(&self) -> f64 { // U(s, a), s is the parent, a is self
-        if self.visit_count == 0 {
-            return f64::INFINITY
-        }
         self.mean_action_value_from_s() + self.probability * ((self.visit_count as f64).sqrt() / (1f64 + self.visit_count as f64))  // TODO constant for puct?
     }
 
@@ -114,7 +115,7 @@ pub struct DeferredPositionNode {
 }
 
 impl DeferredPositionNode {
-    pub fn new_and_push(tree: &mut ChessTree, parent: &ExpandedPositionNode, mv: Move) -> usize {
+    fn new_and_push(tree: &mut ChessTree, parent: &ExpandedPositionNode, mv: Move) -> usize {
         let board = parent.chessboard.play_move(&mv);
         let me = DeferredPositionNode {
             index: 0,  // reset correctly below
@@ -130,7 +131,11 @@ impl DeferredPositionNode {
         ind
     }
 
-    pub fn new_game_root(tree: &mut ChessTree) -> usize { // TODO game root is deferred!
+    fn is_root(&self) -> bool {
+        self.index == self.parent
+    }
+
+    pub fn new_game_root(tree: &mut ChessTree) -> usize {
         let board = Chessboard::new();
         let me = DeferredPositionNode {
             index: 0,
@@ -156,7 +161,7 @@ impl DeferredPositionNode {
             history_count -= 1;
         }
         for i in 0..history_count {
-            mvs.push(tree.history[i].to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
+            mvs.push(tree.history[tree.history.len() - 1 - i].to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
         }
         ChessInferenceTensor::new(mvs.as_raw(), meta)
     }
@@ -175,6 +180,7 @@ impl DeferredPositionNode {
 }
 
 impl ChessTree {
+    // concurrency utils
     fn spawn<F>(&self, fut: F) -> tokio::task::JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
@@ -188,42 +194,85 @@ impl ChessTree {
     fn block_on<F: Future>(&self, future: F) -> F::Output {
         self.rt.block_on(future)
     }
-    
-    pub fn reroot(&self, root_child_index: usize) {
-        todo!()
+
+    pub fn new_with_inference() -> ChessTree {
+        let mut me = ChessTree {
+            expanded_arena: Arena::new(),
+            deferred_arena: Arena::new(),
+            history: RingBuffer::new(),
+            total_move_count: 0,
+            rt: tokio::runtime::Runtime::new().unwrap(),
+        };
+
+        let root_ind = DeferredPositionNode::new_game_root(&mut me);
+        let root = me.deferred_arena.pop(root_ind); // reuses inference req code path
+        ExpandedPositionNode::from_deferred_node_and_push(&mut me, root);
+
+        me
+    }
+
+    pub fn reroot(&mut self, temperature: f64) {
+        // TODO also have a reroot method which maintains the explored subtree
+        let root = self.get_root();
+        let next_root = if temperature <= 1e-9 {
+            root.children.iter().map(|&i| self.expanded_arena.get(i).unwrap()).max_by_key(|&x| x.visit_count).unwrap()
+        } else {
+            let probs = self.get_action_probabilities(temperature);
+            let mut rng = rng();
+            let dist = WeightedIndex::new(&probs).unwrap();
+            let child_index = dist.sample(&mut rng);
+            let global_index = root.children[child_index];
+            self.expanded_arena.get(global_index).unwrap()
+        };
+        self.history.push_with_overwrite(root.chessboard);
+        self.deferred_arena = Arena::new();
+        self.expanded_arena = Arena::new();
+        self.expanded_arena.push(*next_root.clone());
     }
 
     pub fn get_repetition_count(&self, board: &Chessboard) -> u32 {
         todo!()
     }
 
-    pub fn get_action_probabilities(&self, temperature: f64) -> Vec<f64> {
-        let total = self.get_root().children.iter().fold(0f64, |acc, &i| acc + (self.expanded_arena[i][0].visit_count as f64).powf(1f64 / temperature));
-        self.get_root().children.iter().map(|&i| (self.expanded_arena[i][0].visit_count as f64).powf(1f64 / temperature) / total).collect()
+    fn get_action_probabilities(&self, temperature: f64) -> Vec<f64> {
+        let total = self.get_root().children.iter().fold(0f64, |acc, &i| acc + (self.expanded_arena.get(i).unwrap().visit_count as f64).powf(1f64 / temperature));
+        self.get_root().children.iter().map(|&i| (self.expanded_arena.get(i).unwrap().visit_count as f64).powf(1f64 / temperature) / total).collect()
     }
 
-    pub fn select_child(&self, cur: &ExpandedPositionNode) -> &ExpandedPositionNode {
-        cur.children.iter().map(|&i| &self.expanded_arena.get(i).unwrap()).reduce(|x, y| {
+    pub fn select_child(&self, cur: &ExpandedPositionNode) -> Result<&ExpandedPositionNode, usize> {
+        let best_expanded_child = cur.children.iter().map(|&i| self.expanded_arena.get(i).unwrap()).reduce(|x, y| {
             if x.ucb() > y.ucb() { x } else { y }
-        }).unwrap()
+        });
+        match best_expanded_child {
+            Some(child) => Ok(child),
+            None => {
+                Err(*cur.deferred_children.iter().last().unwrap())
+            }
+        }
     }
 
     pub fn get_root(&self) -> &ExpandedPositionNode {
         self.expanded_arena.get(0).unwrap()
     }
 
-    pub fn select(&self) -> &ExpandedPositionNode {
+    fn select_and_rollout(&mut self) {
         let mut cur = self.get_root();
-        while cur.is_visited() {
-            cur = self.select_child(cur);
+        loop {
+            let preferred_child = self.select_child(cur);
+            match preferred_child {
+                Ok(child) => cur = child,
+                Err(child_index) => {
+                    self.rollout(child_index);
+                    return;
+                }
+            }
         }
-        cur
     }
 
     // TODO try kalmogorov network (joe weber sent this to me)
     // TODO set illegal logits to -inf so they don't get gradient signal
 
-    pub fn expand_node(&mut self, node: &mut ExpandedPositionNode) {
+    fn expand_node(&mut self, node: &mut ExpandedPositionNode) {
         if !node.is_visited() {
             let (nxt_boards, count) = node.chessboard.generate_next_legal_boards(node.color_to_play);
             for i in 0..count {
@@ -236,10 +285,9 @@ impl ChessTree {
     }
 
     /// Applies the deferred inference result & invalidates the deferred node index
-    pub fn rollout(&mut self, deferred_node_index: usize) {
+    fn rollout(&mut self, deferred_node_index: usize) {
         let node = self.deferred_arena.pop(deferred_node_index);
-        let expanded_ind = ExpandedPositionNode::from_deferred_node_and_push(self, node);
-        let mut cur_node = self.expanded_arena.get(expanded_ind).unwrap();
+        let mut cur_node = ExpandedPositionNode::from_deferred_node_and_push(self, node);
         let value = cur_node.value_sum;
         while !cur_node.is_root() {
             let mut parent = cur_node.get_parent_mut(self);

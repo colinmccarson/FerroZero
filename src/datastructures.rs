@@ -73,13 +73,6 @@ impl <'a, T> Iterator for ArrayIter<'a, T> {
     }
 }
 
-impl<'a, T, const N: usize> IntoIterator for Array<T, N> {
-    type Item = T;
-    type IntoIter = ArrayIter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-       self.iter()
-    }
-}
 
 impl<'a, T, const N: usize> IntoIterator for &'a Array<T, N> {
     type Item = &'a T;
@@ -108,15 +101,19 @@ impl<T, const N: usize> RingBuffer<T, N> {
     pub fn new() -> Self {
         Self { arr: Array::new(), head: 0usize, tail: 0, size: 0 }
     }
-
-    pub fn push(&mut self, item: T) -> Result<(), ()> {
+    
+    /// Returns true if the ringbuffer head was overwritten
+    pub fn push_with_overwrite(&mut self, item: T) -> bool {
         if self.size == N {
-            return Err(());
+            self.arr[self.tail] = item;
+            self.tail = (self.tail + 1) % N;
+            self.head = (self.head + 1) % N;
+            return true;
         }
         self.arr.push(item);
         self.size += 1;
         self.tail = (self.tail + 1 ) % N;
-        Ok(())
+        false
     }
 
     pub fn pop(&mut self) -> Option<T> {
