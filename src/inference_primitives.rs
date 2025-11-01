@@ -37,7 +37,7 @@ fn map_sq_to_8x8_plane_idx(sq: u64) -> (i32, i32) {
 pub struct PositionPrior(tch::Tensor);
 
 impl PositionPrior {
-    const EXPECTED_SHAPE: [i32; 3] = [8, 8, 73];
+    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 73];
 
     pub fn new() -> Self {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
@@ -59,7 +59,7 @@ impl PositionPrior {
         }
         probs
     }
-    
+
     pub fn to_prob(&self, mv: &Move) -> f64 {
         let (i, j, pidx) = Self::tens_idx_from_mv(mv);
         self.0.double_value(&[i as i64, j as i64, pidx as i64])
@@ -75,21 +75,23 @@ impl PositionPrior {
     }
 }
 
+impl Clone for PositionPrior {
+    fn clone(&self) -> Self {
+        Self(self.0.copy())
+    }
+}
+
 pub struct PositionInferenceResult {
     priors: PositionPrior,
     value: f64,
 }
 
 impl PositionInferenceResult {
-    pub fn get_priors(&self) -> PositionPrior {
-        self.priors
+    pub fn to_priors_and_value(self) -> (PositionPrior, f64) {
+        (self.priors, self.value)
     }
 
-    pub fn get_value(&self) -> f64 {
-        self.value
-    }
-
-    pub fn from_chessboard(board: Chessboard) -> PositionInferenceResult {
+    pub async fn from_chessboard(board: Chessboard) -> PositionInferenceResult {
         todo!() // TODO inference
     }
 }
@@ -97,14 +99,14 @@ impl PositionInferenceResult {
 pub struct PlaneMaskTensor(tch::Tensor);
 
 impl PlaneMaskTensor {
-    const EXPECTED_SHAPE: [i32; 2] = [8, 8];
+    const EXPECTED_SHAPE: [i64; 2] = [8, 8];
 
     pub fn from_bitboard(board: u64) -> PlaneMaskTensor {
         let mut bits = [0i32; 64];
         for i in 0..64 {
             bits[i] = ((board >> i) as i32) & 1i32;
         }
-        let mask: tch::Tensor = tch::Tensor::from_slice(&bits).view(&(8, 8)).flip(0).flip(1).to_kind(tch::Kind::Half);
+        let mask: tch::Tensor = tch::Tensor::from_slice(&bits).view((8, 8)).flip(0).flip(1).to_kind(tch::Kind::Half);
         Self(mask)
     }
 
@@ -119,7 +121,7 @@ impl Default for PlaneMaskTensor {
 pub struct MoveMetadataTensor(tch::Tensor);
 
 impl MoveMetadataTensor {
-    const EXPECTED_SHAPE: [i32; 3] = [8, 8, 7];
+    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 7];
 
     pub fn new_zeros() -> Self {
         MoveMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
@@ -153,17 +155,17 @@ impl MoveMetadataTensor {
 pub struct MoveTensor(tch::Tensor);
 
 impl MoveTensor {
-    const EXPECTED_SHAPE: [i32; 3] = [8, 8, 14];
+    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 14];
 
     pub fn set_plane_with_mask(&mut self, plane_index: usize, mask: &PlaneMaskTensor, value: f64) {
-        let _ = self.0.i((.., .., plane_index)).masked_fill_(&mask.0, value);
+        let _ = self.0.i((.., .., plane_index as i64)).masked_fill_(&mask.0, value);
     }
 
     pub fn set_plane_with_bitboard(&mut self, plane_idx: usize, board: u64, value: f64) {
         let mask = PlaneMaskTensor::from_bitboard(board);
         self.set_plane_with_mask(plane_idx, &mask, value);
     }
-    
+
     pub fn new_zeros() -> Self {
         MoveTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
@@ -184,10 +186,10 @@ impl Borrow<tch::Tensor> for MoveTensor {
 pub struct ChessInferenceTensor(tch::Tensor);
 
 impl ChessInferenceTensor {
-    const EXPECTED_SHAPE: [i32; 3] = [8, 8, 119];
+    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 119];
 
-    pub fn new(mvs: [MoveTensor; 8], meta: MoveMetadataTensor) -> Self {
-        let all_mvs = tch::Tensor::cat(&mvs, 2);
+    pub fn new(mvs: Array<MoveTensor, 8>, meta: MoveMetadataTensor) -> Self {
+        let all_mvs = tch::Tensor::cat(mvs.as_raw_ref(), 2);
         ChessInferenceTensor(tch::Tensor::cat(&[all_mvs, meta.0], 2))
     }
 }

@@ -12,6 +12,7 @@ unroll = "0.1.5"
 tokio = { version = "1.48.0", features = ["full"] }
 futures = "0.3.31"
 tch = "0.22.0"
+rand = "0.10.0-rc.0"
 
 [workspace]
 members = [
@@ -19,6 +20,3 @@ members = [
     "chess_utils",
     "gen_tables",
 ]
-
-[dev-dependencies]
-rand = "0.9.2"

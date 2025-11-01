@@ -1,7 +1,9 @@
 use std::mem::MaybeUninit;
 use std::ops::Index;
 use std::ops::IndexMut;
+use std::ptr;
 // TODO want to use this for all MoveLists
+
 pub struct Array<T, const N: usize> {  // TODO use maybe uninit things
     arr: [MaybeUninit<T>; N],
     len: usize,
@@ -24,12 +26,7 @@ impl<T, const N: usize> Array<T, N> {
 
     pub fn as_raw_ref(&self) -> &[T; N] {
         assert_eq!(self.len, N, "Array is not fully initialized!");
-        unsafe { &*(&self.arr as *const [MaybeUninit<T>; N] as *const [T; N]) }
-    }
-
-    pub fn as_raw(&self) -> [T; N] {
-        assert_eq!(self.len, N, "Array is not fully initialized!");
-        unsafe { std::mem::transmute::<[MaybeUninit<T>; N], [T; N]>(self.arr) }
+        unsafe { &*(self.arr.as_ptr() as *const [T; N]) }
     }
 
     pub fn iter(&self) -> ArrayIter<'_, T> {
@@ -77,7 +74,7 @@ impl <'a, T> Iterator for ArrayIter<'a, T> {
 impl<'a, T, const N: usize> IntoIterator for &'a Array<T, N> {
     type Item = &'a T;
     type IntoIter = ArrayIter<'a, T>;
-    fn into_iter(&self) -> Self::IntoIter {
+    fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
@@ -90,14 +87,25 @@ impl<T, const N: usize> Drop for Array<T, N> {
     }
 }
 
-pub struct RingBuffer<T, const N: usize> {
+impl<T, const N: usize> Clone for Array<T, N> {
+    fn clone(&self) -> Self {
+        let mut new_arr: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        unsafe { ptr::copy_nonoverlapping(&self.arr, &mut new_arr, N) }
+        Self {
+            arr: new_arr,
+            len: self.len,
+        }
+    }
+}
+
+pub struct RingBuffer<T, const N: usize> where T: Copy {
     arr: Array<T, N>,
     head: usize,
     tail: usize,
     size: usize
 }
 
-impl<T, const N: usize> RingBuffer<T, N> {
+impl<T, const N: usize> RingBuffer<T, N> where T: Copy {
     pub fn new() -> Self {
         Self { arr: Array::new(), head: 0usize, tail: 0, size: 0 }
     }
@@ -120,7 +128,7 @@ impl<T, const N: usize> RingBuffer<T, N> {
         if self.size == 0 {
             return None;
         }
-        let result = unsafe { self.arr[self.head].assume_init() };
+        let result = self.arr[self.head];
         self.head += (self.head + 1) % N;
         self.size -= 1;
         Some(result)
@@ -143,19 +151,19 @@ impl<T, const N: usize> RingBuffer<T, N> {
 }
 
 
-impl<T, const N: usize> Index<usize> for RingBuffer<T, N> {
+impl<T, const N: usize> Index<usize> for RingBuffer<T, N> where T: Copy {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
         assert!(index < self.size, "index out of bounds");
-        self.arr[(self.head + index) % N]
+        &self.arr[(self.head + index) % N]
     }
 }
 
-impl<T, const N: usize> IndexMut<usize> for RingBuffer<T, N> {
+impl<T, const N: usize> IndexMut<usize> for RingBuffer<T, N> where T: Copy {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         assert!(index < self.size, "index out of bounds");
-        self.arr[(self.head + index) % N]
+        &mut self.arr[(self.head + index) % N]
     }
 }
 
@@ -197,7 +205,7 @@ impl<T> Arena<T> {
         self.arena[index].as_ref()
     }
 
-    pub fn get_mut(&self, index: usize) -> Option<&mut T> {
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         self.arena[index].as_mut()
     }
 
