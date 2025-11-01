@@ -23,7 +23,7 @@ pub enum TerminalState {
 pub struct ChessTree {
     expanded_arena: Arena<ExpandedPositionNode>,  // re-rooting drops children,
     deferred_arena: Arena<DeferredPositionNode>, // TODO subtree block arenas
-    history: Vec<Chessboard>,  // TODO update tensor creation for full history
+    history: Vec<Chessboard>,
     total_move_count: u32,
     rt: tokio::runtime::Runtime,
 }
@@ -75,19 +75,19 @@ impl ExpandedPositionNode {
         self.value_sum / (self.visit_count as f64)
     }
 
-    pub fn ucb(&self) -> f64 { // U(s, a), s is the parent, a is self
+    fn ucb(&self) -> f64 { // U(s, a), s is the parent, a is self
         self.mean_action_value_from_s() + self.probability * ((self.visit_count as f64).sqrt() / (1f64 + self.visit_count as f64))  // TODO constant for puct?
     }
 
-    pub fn is_visited(&self) -> bool {
+    fn is_visited(&self) -> bool {
         self.visit_count > 0
     }
 
-    pub fn get_value(&self) -> f64 {
+    fn get_value(&self) -> f64 {
         self.value_sum
     }
 
-    pub fn get_probability(&self, dirichlet_param: f64) -> f64 {
+    fn get_probability(&self, dirichlet_param: f64) -> f64 {
         self.probability // TODO dirichlet noise
     }
 
@@ -162,8 +162,8 @@ impl DeferredPositionNode {
             mvs.push(tree.history[tree.history.len() - 1 - i].to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
             history_count -= 1;
         }
-        for i in 0..history_count {
-            todo!() // TODO push blank tensors
+        for _ in 0..history_count {
+            mvs.push(MoveTensor::new_zeros());
         }
         ChessInferenceTensor::new(mvs.as_raw(), meta)
     }
@@ -234,7 +234,7 @@ impl ChessTree {
     }
 
     fn get_repetition_count(&self, board: &Chessboard) -> u32 {
-        todo!()
+        self.history.iter().filter(|&b| b == board).count() as u32 // TODO replace with zobrist eq
     }
 
     fn get_action_probabilities(&self, temperature: f64) -> Vec<f64> {

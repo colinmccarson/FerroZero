@@ -163,6 +163,10 @@ impl MoveTensor {
         let mask = PlaneMaskTensor::from_bitboard(board);
         self.set_plane_with_mask(plane_idx, &mask, value);
     }
+    
+    pub fn new_zeros() -> Self {
+        MoveTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+    }
 }
 
 impl Default for MoveTensor {

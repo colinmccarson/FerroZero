@@ -775,7 +775,7 @@ impl Chessboard { // TODO zobrist hashing
             || (white_king_knight && black_king_knight)
             || (white_king_bishop && black_king_knight)
             || (white_king_knight && black_king_bishop)
-            || self.moves_since_takes == 50
+            || self.moves_since_takes == 100 // half move
     }
 
     /// Gets the piece bitboard, oriented such that the bottom is the player to play
