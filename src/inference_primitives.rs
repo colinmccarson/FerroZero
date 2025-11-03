@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::ser::SerializeStruct;
 use tch;
 use tch::IndexOp;
-
+use tch::TchError::SafeTensorError;
 use chess_utils::consts::DIRECTIONS;
 use chess_utils::utils::get_direction_to_target;
 use chess_utils::utils::get_distance_in_direction_not_zero;
@@ -95,6 +95,24 @@ impl PositionInferenceResult {
 
     pub async fn from_chessboard(board: Chessboard) -> PositionInferenceResult {
         todo!() // TODO inference
+    }
+    
+    pub fn into_serializable(self, id: usize) -> SerializableInferenceResult {
+        let helper = SerializeTensorHelper::from_tensor(&self.priors.0, id);
+        SerializableInferenceResult { helper, value: self.value}
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SerializableInferenceResult {
+    helper: SerializeTensorHelper,
+    value: f64,
+}
+
+impl SerializableInferenceResult {
+    pub fn into_inference_result_and_id(self) -> (PositionInferenceResult, usize) {
+        let (tensor, id) = self.helper.into_tensor_and_id(&PositionPrior::EXPECTED_SHAPE);
+        (PositionInferenceResult {priors: PositionPrior(tensor), value: self.value}, id)
     }
 }
 
@@ -198,16 +216,34 @@ impl PositionWithContextTensor {
     pub fn to_serializable(self, request_id: usize) -> SerializedPositionWithContextAndId {
         SerializedPositionWithContextAndId { tensor: self, id: request_id }
     }
-    
+
     pub fn into_tensor(self) -> tch::Tensor {
         self.0
     }
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializePositionHelper {
+struct SerializeTensorHelper {
     data: Vec<f32>,
     id: usize,
+}
+
+impl SerializeTensorHelper {
+    pub fn from_tensor(tensor: &tch::Tensor, id: usize) -> Self {
+        let mut data: Vec<f32> = Vec::new();
+        for i in 0..8i64 {
+            for j in 0..8i64 {
+                for k in 0..119i64 {
+                    data.push(tensor.double_value(&[i, j, k]) as f32);
+                }
+            }
+        }
+        SerializeTensorHelper { data, id }
+    }
+    
+    pub fn into_tensor_and_id(self, shape: &[i64]) -> (tch::Tensor, usize) {
+        (tch::Tensor::from_slice(self.data.as_slice()).reshape(shape), self.id)
+    }
 }
 
 pub struct SerializedPositionWithContextAndId {
@@ -226,15 +262,7 @@ impl Serialize for SerializedPositionWithContextAndId {
     where
         S: Serializer
     {
-        let mut tensor_data: Vec<f32> = Vec::new();
-        for i in 0..8i64 {
-            for j in 0..8i64 {
-                for k in 0..119i64 {
-                    tensor_data.push(self.tensor.0.double_value(&[i, j, k]) as f32);
-                }
-            }
-        }
-        let ser = SerializePositionHelper {data: tensor_data, id: self.id};
+        let ser = SerializeTensorHelper::from_tensor(&self.tensor.0, self.id);
         ser.serialize(serializer)
     }
 }
@@ -244,8 +272,8 @@ impl<'de> Deserialize<'de> for SerializedPositionWithContextAndId {
     where
         D: Deserializer<'de>
     {
-        let helper = SerializePositionHelper::deserialize(deserializer)?;
-        let tensor = PositionWithContextTensor(tch::Tensor::from_slice(&helper.data).reshape(PositionWithContextTensor::EXPECTED_SHAPE));
-        Ok(SerializedPositionWithContextAndId { tensor, id: helper.id })
+        let helper = SerializeTensorHelper::deserialize(deserializer)?;
+        let (tensor, id) = helper.into_tensor_and_id(&PositionWithContextTensor::EXPECTED_SHAPE);
+        Ok(SerializedPositionWithContextAndId { tensor: PositionWithContextTensor(tensor), id })
     }
 }

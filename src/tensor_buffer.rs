@@ -36,14 +36,15 @@ impl InferenceClient {
         let mut connection = self.connection.clone();
         loop {
             let (_key, payload): (String, Vec<u8>) = connection.brpop(INFERENCE_RESULT_BUFFER, 0.0).await.unwrap();
-            let r = flexbuffers::Reader::get_root(payload.as_slice());
 
-            let result = PositionInferenceResultWithId::deserialize(r).unwrap(); // TODO serialize / deserialize for PositionInferenceResults with Ids
-            let (position_inference_result, id) = result.to_tuple();
+            let r = flexbuffers::Reader::get_root(payload.as_slice()).unwrap();
+            let result = SerializableInferenceResult::deserialize(r).unwrap();
 
-            let mut rx = self.pending.get(id).unwrap();
+            let (position_inference_result, id) = result.into_inference_result_and_id();
+
+            let mut rx = self.pending.get(&id).unwrap();
             rx.send(position_inference_result).unwrap();
-            self.pending.remove(id);
+            self.pending.remove(&id);
         }
     }
 
@@ -81,26 +82,32 @@ impl<'a> InferenceBatchManager<'a> {
         Self { connection, minimum_batch_size, max_poll_misses, short_poll_duration, rt }
     }
 
-    pub async fn get_batch(&self) -> Vec<(tch::Tensor, usize)> { // TODO get rid of async
+    async fn get_batch(&self) -> (tch::Tensor, Vec<usize>) { // TODO get rid of async
         let mut connection = self.connection.clone();
-        let mut buf: Vec<(tch::Tensor, usize)> = Vec::new();
+        let mut tens_buf: Vec<tch::Tensor> = Vec::new();
+        let mut id_buf: Vec<usize> = Vec::new();
         // TODO tokio run with timeout that returns whatever we got
         let mut count_misses = 0;
-        while (buf.len() < self.minimum_batch_size && count_misses < self.max_poll_misses) || (buf.len() == 0) {
-            let rr: redis::RedisResult<(String, Vec<u8>)> = connection.blpop(INFERENCE_BUFFER, 0.25).await;
+        while (tens_buf.len() < self.minimum_batch_size && count_misses < self.max_poll_misses) || (tens_buf.len() == 0) {
+            let rr: redis::RedisResult<(String, Vec<u8>)> = connection.blpop(INFERENCE_BUFFER, self.short_poll_duration).await;
             match rr {
                 Ok((_key, payload)) => {
                     let r = flexbuffers::Reader::get_root(payload.as_slice()).unwrap();
                     let (result, id) = SerializedPositionWithContextAndId::deserialize(r).unwrap().into_tuple();
-                    buf.push((result.into_tensor(), id));
+                    tens_buf.push(result.into_tensor());
+                    id_buf.push(id);
                 }
                 Err(_) => {
-                    if buf.len() > 0 {
+                    if tens_buf.len() > 0 {
                         count_misses += 1;
                     }
                 }
             }
         }
-        buf
+        (tch::Tensor::stack(&tens_buf, 0), id_buf)
+    }
+
+    pub fn python_get_batch(&self) -> (tch::Tensor, Vec<usize>) {
+        self.rt.block_on(self.get_batch())
     }
 }
