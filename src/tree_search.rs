@@ -170,9 +170,9 @@ impl DeferredPositionNode {
         tree.deferred_arena.push(me)
     }
 
-    pub fn to_tensor(&self, tree: &ChessTree) -> ChessInferenceTensor {
+    pub fn to_tensor(&self, tree: &ChessTree) -> PositionWithContextTensor {
         let meta = self.chessboard.to_mv_metadata_tensor(self.color_to_play, tree.total_move_count);
-        let mut mvs: Array<MoveTensor, 8> = Array::new();
+        let mut mvs: Array<PositionTensor, 8> = Array::new();
         mvs.push(self.chessboard.to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
         let mut history_count: usize = 7;
         let mut cur = tree.expanded_arena.get(self.parent).unwrap();
@@ -186,9 +186,9 @@ impl DeferredPositionNode {
             history_count -= 1;
         }
         for _ in 0..history_count {
-            mvs.push(MoveTensor::new_zeros());
+            mvs.push(PositionTensor::new_zeros());
         }
-        ChessInferenceTensor::new(mvs, meta)
+        PositionWithContextTensor::new(mvs, meta)
     }
 }
 
@@ -293,7 +293,7 @@ impl ChessTree {
     // TODO try kalmogorov network (joe weber sent this to me)
     // TODO set illegal logits to -inf so they don't get gradient signal
 
-    fn expand_node(&mut self, node: &mut ExpandedPositionNode) {
+    fn expand_node(&mut self, node: &mut ExpandedPositionNode) { // TODO give first rollout inference priority
         if !node.is_visited() {
             let (nxt_boards, count) = node.chessboard.generate_next_legal_boards(node.color_to_play);
             for i in 0..count {

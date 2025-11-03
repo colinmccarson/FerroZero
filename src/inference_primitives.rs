@@ -1,4 +1,6 @@
 use std::borrow::Borrow;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::ser::SerializeStruct;
 use tch;
 use tch::IndexOp;
 
@@ -118,13 +120,13 @@ impl Default for PlaneMaskTensor {
     }
 }
 
-pub struct MoveMetadataTensor(tch::Tensor);
+pub struct PositionMetadataTensor(tch::Tensor);
 
-impl MoveMetadataTensor {
+impl PositionMetadataTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 7];
 
     pub fn new_zeros() -> Self {
-        MoveMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+        PositionMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 
     pub fn set_color(&mut self, color: Colors) {
@@ -152,9 +154,9 @@ impl MoveMetadataTensor {
 
 }
 
-pub struct MoveTensor(tch::Tensor);
+pub struct PositionTensor(tch::Tensor);
 
-impl MoveTensor {
+impl PositionTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 14];
 
     pub fn set_plane_with_mask(&mut self, plane_index: usize, mask: &PlaneMaskTensor, value: f64) {
@@ -167,29 +169,83 @@ impl MoveTensor {
     }
 
     pub fn new_zeros() -> Self {
-        MoveTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+        PositionTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 }
 
-impl Default for MoveTensor {
+impl Default for PositionTensor {
     fn default() -> Self {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 }
 
-impl Borrow<tch::Tensor> for MoveTensor {
+impl Borrow<tch::Tensor> for PositionTensor {
     fn borrow(&self) -> &tch::Tensor {
         &self.0
     }
 }
 
-pub struct ChessInferenceTensor(tch::Tensor);
+pub struct PositionWithContextTensor(tch::Tensor);
 
-impl ChessInferenceTensor {
+impl PositionWithContextTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 119];
 
-    pub fn new(mvs: Array<MoveTensor, 8>, meta: MoveMetadataTensor) -> Self {
+    pub fn new(mvs: Array<PositionTensor, 8>, meta: PositionMetadataTensor) -> Self {
         let all_mvs = tch::Tensor::cat(mvs.as_raw_ref(), 2);
-        ChessInferenceTensor(tch::Tensor::cat(&[all_mvs, meta.0], 2))
+        PositionWithContextTensor(tch::Tensor::cat(&[all_mvs, meta.0], 2))
+    }
+
+    pub fn to_serializable(self, request_id: usize) -> SerializedPositionWithContextAndId {
+        SerializedPositionWithContextAndId { tensor: self, id: request_id }
+    }
+    
+    pub fn into_tensor(self) -> tch::Tensor {
+        self.0
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializePositionHelper {
+    data: Vec<f32>,
+    id: usize,
+}
+
+pub struct SerializedPositionWithContextAndId {
+    tensor: PositionWithContextTensor,
+    id: usize
+}
+
+impl SerializedPositionWithContextAndId {
+    pub fn into_tuple(self) -> (PositionWithContextTensor, usize) {
+        (self.tensor, self.id)
+    }
+}
+
+impl Serialize for SerializedPositionWithContextAndId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        let mut tensor_data: Vec<f32> = Vec::new();
+        for i in 0..8i64 {
+            for j in 0..8i64 {
+                for k in 0..119i64 {
+                    tensor_data.push(self.tensor.0.double_value(&[i, j, k]) as f32);
+                }
+            }
+        }
+        let ser = SerializePositionHelper {data: tensor_data, id: self.id};
+        ser.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SerializedPositionWithContextAndId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        let helper = SerializePositionHelper::deserialize(deserializer)?;
+        let tensor = PositionWithContextTensor(tch::Tensor::from_slice(&helper.data).reshape(PositionWithContextTensor::EXPECTED_SHAPE));
+        Ok(SerializedPositionWithContextAndId { tensor, id: helper.id })
     }
 }
