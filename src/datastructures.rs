@@ -35,6 +35,11 @@ impl<T, const N: usize> Array<T, N> {
         };
         ArrayIter { slice }
     }
+
+    pub fn to_byte_slice<'a>(&self) -> &'a [u8] {
+        assert_eq!(self.len, N, "Array is not fully initialized!");
+        unsafe { std::slice::from_raw_parts(self.arr.as_ptr() as *const u8, self.len) }
+    }
 }
 
 
