@@ -8,7 +8,7 @@ use chess_utils::consts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
 
-use crate::inference_primitives::{MoveMetadataTensor, MoveTensor};
+use crate::inference_primitives::{PositionMetadataTensor, PositionTensor};
 use crate::datastructures::Array;
 
 type MoveList = Array<Move, 256>;
@@ -788,8 +788,8 @@ impl Chessboard { // TODO zobrist hashing
     }
 
     /// Returns the 8x8x119 tensor for the move. color is 'P1' from the paper, i.e. player to move
-    pub fn to_mv_tensor(&self, color: Colors, repetition_count: u32) -> MoveTensor {
-        let mut tens = MoveTensor::default();
+    pub fn to_mv_tensor(&self, color: Colors, repetition_count: u32) -> PositionTensor {
+        let mut tens = PositionTensor::default();
         // fill piece layers, subject to player orientation
         let mut offset = 0;
         for i in 0..6usize {
@@ -806,8 +806,8 @@ impl Chessboard { // TODO zobrist hashing
         tens
     }
 
-    pub fn to_mv_metadata_tensor(&self, color: Colors, total_move_count: u32) -> MoveMetadataTensor {
-        let mut tens = MoveMetadataTensor::new_zeros();
+    pub fn to_mv_metadata_tensor(&self, color: Colors, total_move_count: u32) -> PositionMetadataTensor {
+        let mut tens = PositionMetadataTensor::new_zeros();
         tens.set_color(color);
         tens.set_castling(self, color);
         tens.set_noprogress_count(self.moves_since_takes);

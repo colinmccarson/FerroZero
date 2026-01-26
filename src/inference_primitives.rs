@@ -1,8 +1,9 @@
+use bytemuck;
 use std::borrow::Borrow;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::ser::SerializeStruct;
 use tch;
 use tch::IndexOp;
-
-use chess_utils::consts::DIRECTIONS;
 use chess_utils::utils::get_direction_to_target;
 use chess_utils::utils::get_distance_in_direction_not_zero;
 use chess_utils::utils::map_rank_and_file_to_sq;
@@ -34,6 +35,7 @@ fn map_sq_to_8x8_plane_idx(sq: u64) -> (i32, i32) {
 
 
 /// Indexing scheme in the first 56 is (direction, num squares)
+#[derive(Debug)]
 pub struct PositionPrior(tch::Tensor);
 
 impl PositionPrior {
@@ -41,6 +43,10 @@ impl PositionPrior {
 
     pub fn new() -> Self {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+    }
+    
+    pub fn from_tensor(tens: tch::Tensor) -> Self {
+        Self(tens)
     }
 
     fn tens_idx_from_mv(mv: &Move) -> (i32, i32, i32) {
@@ -81,20 +87,30 @@ impl Clone for PositionPrior {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PositionInferenceResult {
     priors: PositionPrior,
     value: f64,
+    request_id: usize
 }
 
 impl PositionInferenceResult {
+    pub async fn from_chessboard(chessboard: Chessboard) -> Self {
+        todo!()
+    }
     pub fn to_priors_and_value(self) -> (PositionPrior, f64) {
         (self.priors, self.value)
     }
-
-    pub async fn from_chessboard(board: Chessboard) -> PositionInferenceResult {
-        todo!() // TODO inference
+    
+    pub fn new(priors: PositionPrior, value: f64, request_id: usize) -> Self {
+        Self { priors, value, request_id }
+    }
+    
+    pub fn get_request_id(&self) -> usize {
+        self.request_id
     }
 }
+
 
 pub struct PlaneMaskTensor(tch::Tensor);
 
@@ -118,13 +134,13 @@ impl Default for PlaneMaskTensor {
     }
 }
 
-pub struct MoveMetadataTensor(tch::Tensor);
+pub struct PositionMetadataTensor(tch::Tensor);
 
-impl MoveMetadataTensor {
+impl PositionMetadataTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 7];
 
     pub fn new_zeros() -> Self {
-        MoveMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+        PositionMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 
     pub fn set_color(&mut self, color: Colors) {
@@ -152,9 +168,9 @@ impl MoveMetadataTensor {
 
 }
 
-pub struct MoveTensor(tch::Tensor);
+pub struct PositionTensor(tch::Tensor);
 
-impl MoveTensor {
+impl PositionTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 14];
 
     pub fn set_plane_with_mask(&mut self, plane_index: usize, mask: &PlaneMaskTensor, value: f64) {
@@ -167,29 +183,112 @@ impl MoveTensor {
     }
 
     pub fn new_zeros() -> Self {
-        MoveTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
+        PositionTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 }
 
-impl Default for MoveTensor {
+impl Default for PositionTensor {
     fn default() -> Self {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
     }
 }
 
-impl Borrow<tch::Tensor> for MoveTensor {
+impl Borrow<tch::Tensor> for PositionTensor {
     fn borrow(&self) -> &tch::Tensor {
         &self.0
     }
 }
 
-pub struct ChessInferenceTensor(tch::Tensor);
+pub struct PositionWithContextTensor(tch::Tensor);
 
-impl ChessInferenceTensor {
+impl PositionWithContextTensor {
     const EXPECTED_SHAPE: [i64; 3] = [8, 8, 119];
 
-    pub fn new(mvs: Array<MoveTensor, 8>, meta: MoveMetadataTensor) -> Self {
+    pub fn new(mvs: Array<PositionTensor, 8>, meta: PositionMetadataTensor) -> Self {
         let all_mvs = tch::Tensor::cat(mvs.as_raw_ref(), 2);
-        ChessInferenceTensor(tch::Tensor::cat(&[all_mvs, meta.0], 2))
+        PositionWithContextTensor(tch::Tensor::cat(&[all_mvs, meta.0], 2))
+    }
+
+    pub fn into_tensor(self) -> tch::Tensor {
+        self.0
     }
 }
+
+macro_rules! impl_serializable_tensor {
+    (
+        $name:ident,
+        dtype = $kind:expr,
+        rust_ty = $rust_ty:ty
+    ) => {
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let tensor = self.0.to_kind($kind).contiguous();
+
+                let numel = tensor.numel();
+                let mut data = vec![<$rust_ty as Default>::default(); numel as usize];
+
+                tensor.copy_data(&mut data, numel);
+
+                let bytes: &[u8] = bytemuck::cast_slice(&data);
+                serializer.serialize_bytes(bytes)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct TensorVisitor;
+
+                impl<'de> serde::de::Visitor<'de> for TensorVisitor {
+                    type Value = $name;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str("a byte buffer representing a tensor")
+                    }
+
+                    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        // SAFETY: bytes must be correctly aligned and sized
+                        if v.len() % std::mem::size_of::<$rust_ty>() != 0 {
+                            return Err(E::custom("invalid tensor byte length"));
+                        }
+
+                        let data: Vec<$rust_ty> =
+                            bytemuck::cast_slice(v).to_vec();
+
+                        let tensor = tch::Tensor::f_from_slice(&data)
+                            .map_err(|e| E::custom(e.to_string()))?;
+
+                        Ok($name(tensor))
+                    }
+                }
+
+                deserializer.deserialize_bytes(TensorVisitor)
+            }
+        }
+    };
+}
+
+impl_serializable_tensor!(PositionPrior, dtype = tch::Kind::Float, rust_ty = f32);
+impl_serializable_tensor!(PositionWithContextTensor, dtype = tch::Kind::Float, rust_ty = f32);
+
+#[derive(Serialize, Deserialize)]
+pub struct PositionInferenceRequest {
+    tensor: PositionWithContextTensor,
+    move_id: usize,
+    requester_id: uuid::Uuid,
+}
+
+impl PositionInferenceRequest {
+    pub fn into_tuple(self) -> (PositionWithContextTensor, usize, uuid::Uuid) {
+        (self.tensor, self.move_id, self.requester_id)
+    }
+}
+
