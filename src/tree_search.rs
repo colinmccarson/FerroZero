@@ -166,7 +166,7 @@ impl DeferredPositionNode {
             inference_result: Ok(tree.spawn(async move { PositionInferenceResult::from_chessboard(board).await } )),
             probability: 1f64,
             color_to_play: Colors::WHITE,
-        }; // TODO will spawn every inference task so it starts running and await on rollout ()
+        };
         tree.deferred_arena.push(me)
     }
 
@@ -293,7 +293,7 @@ impl ChessTree {
     // TODO try kalmogorov network (joe weber sent this to me)
     // TODO set illegal logits to -inf so they don't get gradient signal
 
-    fn expand_node(&mut self, node: &mut ExpandedPositionNode) { // TODO give first rollout inference priority
+    fn expand_node(&mut self, node: &mut ExpandedPositionNode) {
         if !node.is_visited() {
             let (nxt_boards, count) = node.chessboard.generate_next_legal_boards(node.color_to_play);
             for i in 0..count {
