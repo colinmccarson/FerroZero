@@ -8,7 +8,7 @@ use chess_utils::consts::*;
 use chess_utils::utils::*;
 use gen_tables::*;
 
-use crate::inference_primitives::{PositionMetadataTensor, PositionTensor};
+use crate::inference_primitives::{PositionMetadataTensor, PositionTensor, PositionWithContextTensor};
 use crate::datastructures::Array;
 
 type MoveList = Array<Move, 256>;
@@ -821,6 +821,17 @@ impl Chessboard { // TODO zobrist hashing
             && (self.moves_since_takes > 0)
             && (self.may_castle_queenside(reached_with.color) == last_pos.may_castle_queenside(reached_with.color))
             && (self.may_castle_kingside(reached_with.color) == last_pos.may_castle_kingside(reached_with.color))
+    }
+
+    // TODO combine to_mv_metadata_tensor & to_mv_tensor. then delete to_root_tensor
+
+    pub fn to_root_tensor(&self) -> PositionWithContextTensor {
+        /// Method should only be called on a root. Just here for convenience.
+        let meta_tens = self.to_mv_metadata_tensor(Colors::WHITE, 0);
+        let mv_tens = self.to_mv_tensor(Colors::WHITE, 0);
+        let mut mv_arr: Array<PositionTensor, 8> = Array::new();
+        mv_arr.push(mv_tens);
+        PositionWithContextTensor::new(mv_arr, meta_tens)
     }
 }
 

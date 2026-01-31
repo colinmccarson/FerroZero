@@ -30,8 +30,8 @@ pub struct InferenceClient {
 }
 
 impl InferenceClient {
-    pub fn new(uri: &str, rt: &tokio::runtime::Runtime) -> Self {
-        let connection = rt.block_on(async {
+    pub fn new(uri: &str, rt_handle: tokio::runtime::Handle) -> Self {
+        let connection = rt_handle.block_on(async {
             let client = redis::Client::open(uri)?;
             client.get_multiplexed_async_connection().await
         }).unwrap();
@@ -65,6 +65,11 @@ impl InferenceClient {
         let _: () = connection.rpush(INFERENCE_BUFFER, buf.view()).await.unwrap();
         self.pending.insert(id, tx); // dashmap magic
         (id, rx)
+    }
+    
+    pub async fn single_inference(&self, tens: PositionWithContextTensor) -> PositionInferenceResult {
+        let (_, rx) = self.send_tensor(tens).await;
+        rx.await.unwrap()
     }
 }
 

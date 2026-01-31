@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-
+use std::sync::Arc;
 use futures;
 use tokio;
 use rand::prelude::*;
@@ -8,8 +8,10 @@ use rand::rng;
 use crate::chessboard::Chessboard;
 use crate::chessboard::Move;
 use crate::chessboard::Colors;
+use crate::consts::*;
 use crate::datastructures::*;
 use crate::inference_primitives::*;
+use crate::tensor_buffer::InferenceClient;
 
 
 pub enum TerminalState {
@@ -25,7 +27,8 @@ pub struct ChessTree {
     history: Vec<Chessboard>,
     total_move_count: u32,
     exploration: f64,
-    rt: tokio::runtime::Runtime,
+    rt_handle: tokio::runtime::Handle,
+    inference_client: Arc<InferenceClient>,
 }
 
 
@@ -122,6 +125,13 @@ struct DeferredPositionNode {
 impl DeferredPositionNode {
     fn new_and_push(tree: &mut ChessTree, parent: &ExpandedPositionNode, mv: Move) -> usize {
         let board = parent.chessboard.play_move(&mv);
+        let position_tens = board.to_mv_tensor(
+            Colors::opposite_color(parent.color_to_play),
+            tree.get_repetition_count(&board),
+        );
+        let meta_tens = board.to_mv_metadata_tensor(
+            
+        )
         let me = DeferredPositionNode {
             index: 0,  // reset correctly below
             parent: parent.index,
@@ -158,12 +168,16 @@ impl DeferredPositionNode {
 
     pub fn new_game_root(tree: &mut ChessTree) -> usize {
         let board = Chessboard::new();
+        let root_tens = board.to_root_tensor();
+        let cli_ref = tree.inference_client.clone();
         let me = DeferredPositionNode {
             index: 0,
             parent: 0,
             action: None,
-            chessboard: board,
-            inference_result: Ok(tree.spawn(async move { PositionInferenceResult::from_chessboard(board).await } )),
+            chessboard: board.clone(),
+            inference_result: Ok(tree.spawn(
+                async move { cli_ref.single_inference(root_tens).await }
+            )),
             probability: 1f64,
             color_to_play: Colors::WHITE,
         };
@@ -199,23 +213,24 @@ impl ChessTree {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.rt.spawn(async move {
+        self.rt_handle.spawn(async move {
             fut.await
         })
     }
 
     fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.rt.block_on(future)
+        self.rt_handle.block_on(future)
     }
 
-    pub fn new_with_inference(exploration: f64) -> ChessTree {
+    pub fn new_with_inference(exploration: f64, rt: tokio::runtime::Runtime) -> ChessTree {
         let mut me = ChessTree {
             expanded_arena: Arena::new(),
             deferred_arena: Arena::new(),
             history: Vec::new(),
             total_move_count: 0,
-            rt: tokio::runtime::Runtime::new().unwrap(),
+            rt_handle: rt.handle().clone(),
             exploration,
+            inference_client: Arc::from(InferenceClient::new(&INFERENCE_BUFFER, rt.handle().clone())),
         };
 
         let root_ind = DeferredPositionNode::new_game_root(&mut me);

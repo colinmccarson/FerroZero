@@ -95,9 +95,6 @@ pub struct PositionInferenceResult {
 }
 
 impl PositionInferenceResult {
-    pub async fn from_chessboard(chessboard: Chessboard) -> Self {
-        todo!()
-    }
     pub fn to_priors_and_value(self) -> (PositionPrior, f64) {
         (self.priors, self.value)
     }
@@ -165,7 +162,6 @@ impl PositionMetadataTensor {
         let _ = self.0.i((.., .., 4)).fill_(p2_can_castle_kingside);
         let _ = self.0.i((.., .., 5)).fill_(p2_can_castle_queenside);
     }
-
 }
 
 pub struct PositionTensor(tch::Tensor);
