@@ -27,10 +27,11 @@ pub struct InferenceClient {
     pending: Arc<dashmap::DashMap<usize, tokio::sync::oneshot::Sender<PositionInferenceResult>>>,
     counter: std::sync::atomic::AtomicUsize,
     client_id: uuid::Uuid,
+    shutdown_tx: tokio::sync::watch::Sender<()>,
 }
 
 impl InferenceClient {
-    pub fn new(uri: &str, rt_handle: tokio::runtime::Handle) -> Self {
+    pub fn new(uri: &str, rt_handle: tokio::runtime::Handle) -> Arc<Self> {
         let connection = rt_handle.block_on(async {
             let client = redis::Client::open(uri)?;
             client.get_multiplexed_async_connection().await
@@ -38,20 +39,36 @@ impl InferenceClient {
         let pending = Arc::new(dashmap::DashMap::new());
         let counter = std::sync::atomic::AtomicUsize::new(0);
         let client_id = uuid::Uuid::new_v4();
-        // TODO spawn listener immediately
-        Self { connection, pending, counter, client_id  }
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(());
+        let me = Self { connection, pending, counter, client_id, shutdown_tx  };
+        let arc = Arc::new(me);
+        let arc_for_rt = arc.clone();
+        rt_handle.spawn(async move {
+            arc_for_rt.listen_for_inference_results(shutdown_rx).await
+        });
+        arc
     }
 
-    async fn listen_for_inference_results(&self) {
+    pub fn close(self) {
+        self.shutdown_tx.send(()).expect(
+            "Could not send shutdown signal to InferenceClient"
+        );
+    }
+
+    async fn listen_for_inference_results(&self, mut shutdown: tokio::sync::watch::Receiver<()>) {
         let mut connection = self.connection.clone();
         loop {
-            let (_key, payload): (String, Vec<u8>) = connection.brpop(self.client_id.to_string(), 0.0).await.unwrap();
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                res = connection.brpop(self.client_id.to_string(), 0.0) => {
+                    let (_key, payload): (String, Vec<u8>) = res.unwrap();
+                    let r = flexbuffers::Reader::get_root(payload.as_slice()).unwrap();
+                    let result = PositionInferenceResult::deserialize(r).unwrap();
 
-            let r = flexbuffers::Reader::get_root(payload.as_slice()).unwrap();
-            let result = PositionInferenceResult::deserialize(r).unwrap();
-
-            let rx = self.pending.remove(&result.get_request_id()).unwrap().1;
-            rx.send(result).unwrap();
+                    let rx = self.pending.remove(&result.get_request_id()).unwrap().1;
+                    rx.send(result).unwrap();
+                }
+            }
         }
     }
 
@@ -73,17 +90,17 @@ impl InferenceClient {
     }
 }
 
-pub struct InferenceBatchManager<'a> {
+pub struct InferenceBatchManager {
     connection: redis::aio::MultiplexedConnection,
     minimum_batch_size: usize,
     max_poll_misses: usize,
     short_poll_duration: f64,
-    rt: &'a tokio::runtime::Runtime,
+    rt: tokio::runtime::Handle,
 }
 
-impl<'a> InferenceBatchManager<'a> {
+impl InferenceBatchManager {
     // TODO handle disconnected clients; clean up their lists
-    pub fn new(uri: &str, minimum_batch_size: usize, max_poll_misses: usize, short_poll_duration: f64, rt: &'a tokio::runtime::Runtime) -> Self {
+    pub fn new(uri: &str, minimum_batch_size: usize, max_poll_misses: usize, short_poll_duration: f64, rt: tokio::runtime::Handle) -> Self {
         let connection = rt.block_on(async {
             let client = redis::Client::open(uri)?;
             client.get_multiplexed_async_connection().await
@@ -91,22 +108,21 @@ impl<'a> InferenceBatchManager<'a> {
         Self { connection, minimum_batch_size, max_poll_misses, short_poll_duration, rt }
     }
 
-    async fn get_batch(&self) -> (tch::Tensor, Vec<usize>, Vec<uuid::Uuid>) {
-        let mut connection = self.connection.clone();
+    pub async fn get_batch(&mut self) -> (tch::Tensor, Vec<usize>, Vec<uuid::Uuid>) {
         let mut tens_buf: Vec<tch::Tensor> = Vec::new();
         let mut move_id_buf: Vec<usize> = Vec::new();
-        let mut request_id_buf: Vec<uuid::Uuid> = Vec::new();
+        let mut requester_id_buf: Vec<uuid::Uuid> = Vec::new();
         // TODO tokio run with timeout that returns whatever we got
         let mut count_misses = 0;
         while (tens_buf.len() < self.minimum_batch_size && count_misses < self.max_poll_misses) || (tens_buf.len() == 0) {
-            let rr: redis::RedisResult<(String, Vec<u8>)> = connection.blpop(INFERENCE_BUFFER, self.short_poll_duration).await;
+            let rr: redis::RedisResult<(String, Vec<u8>)> = self.connection.blpop(INFERENCE_BUFFER, self.short_poll_duration).await;
             match rr {
                 Ok((_key, payload)) => {
                     let r = flexbuffers::Reader::get_root(payload.as_slice()).unwrap();
                     let (result, move_id, requester_id) = PositionInferenceRequest::deserialize(r).unwrap().into_tuple();
                     tens_buf.push(result.into_tensor());
                     move_id_buf.push(move_id);
-                    request_id_buf.push(requester_id);
+                    requester_id_buf.push(requester_id);
                 }
                 Err(_) => {
                     if tens_buf.len() > 0 {
@@ -115,22 +131,24 @@ impl<'a> InferenceBatchManager<'a> {
                 }
             }
         }
-        (tch::Tensor::stack(&tens_buf, 0), move_id_buf, request_id_buf)
+        (tch::Tensor::stack(&tens_buf, 0), move_id_buf, requester_id_buf)
     }
 
-    pub fn python_get_batch(&self) -> (tch::Tensor, Vec<usize>, Vec<uuid::Uuid>) {
-        self.rt.block_on(self.get_batch())
+    pub fn python_get_batch(&mut self) -> (tch::Tensor, Vec<usize>, Vec<uuid::Uuid>) {
+        todo!();
+        // TODO marshall into tensor
+        // self.rt.block_on(self.get_batch())
     }
 
-    pub async fn publish_inference_results(&self, stacked_priors: tch::Tensor, value: Vec<f64>, request_ids: Vec<usize>, client_ids: Vec<uuid::Uuid>) {
+    pub async fn publish_inference_results(&self, stacked_priors: tch::Tensor, value: Vec<f64>, move_ids: Vec<usize>, client_ids: Vec<uuid::Uuid>) {
         let mut connection = self.connection.clone();
 
         debug_assert_eq!(stacked_priors.size()[0] as usize, value.len());
-        debug_assert_eq!(value.len(), request_ids.len());
-        debug_assert_eq!(request_ids.len(), client_ids.len());
+        debug_assert_eq!(value.len(), move_ids.len());
+        debug_assert_eq!(move_ids.len(), client_ids.len());
         let n = value.len();
         for i in 0..n {
-            let result = PositionInferenceResult::new(PositionPrior::from_tensor(stacked_priors.get(i as i64)), value[i], request_ids[i]);
+            let result = PositionInferenceResult::new(PositionPrior::from_tensor(stacked_priors.get(i as i64)), value[i], move_ids[i]);
             let buf = serialize(result);
             let _: () = connection.rpush(client_ids[i].to_string(), buf.view()).await.unwrap(); // TODO could be bad
         }

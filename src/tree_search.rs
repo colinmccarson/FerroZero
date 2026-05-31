@@ -125,20 +125,19 @@ struct DeferredPositionNode {
 impl DeferredPositionNode {
     fn new_and_push(tree: &mut ChessTree, parent: &ExpandedPositionNode, mv: Move) -> usize {
         let board = parent.chessboard.play_move(&mv);
-        let position_tens = board.to_mv_tensor(
-            Colors::opposite_color(parent.color_to_play),
-            tree.get_repetition_count(&board),
+        let inf_tens = DeferredPositionNode::make_tensor_from_parts(
+            board, Colors::opposite_color(parent.color_to_play), parent, tree
         );
-        let meta_tens = board.to_mv_metadata_tensor(
-            
-        )
+        let cli_ref = tree.inference_client.clone();
         let me = DeferredPositionNode {
             index: 0,  // reset correctly below
             parent: parent.index,
             probability: parent.priors.as_ref().unwrap().to_prob(&mv),
             action: Some(mv),
             chessboard: board.clone(),
-            inference_result: Ok(tree.spawn(async move { PositionInferenceResult::from_chessboard(board).await } )),
+            inference_result: Ok(tree.spawn(async move {
+                cli_ref.single_inference(inf_tens).await
+            })),
             color_to_play: Colors::opposite_color(parent.color_to_play),
         };
         let ind = tree.deferred_arena.push(me);
@@ -184,19 +183,19 @@ impl DeferredPositionNode {
         tree.deferred_arena.push(me)
     }
 
-    pub fn to_tensor(&self, tree: &ChessTree) -> PositionWithContextTensor {
-        let meta = self.chessboard.to_mv_metadata_tensor(self.color_to_play, tree.total_move_count);
+    fn make_tensor_from_parts(chessboard: Chessboard, color_to_play: Colors, parent: &ExpandedPositionNode, tree: &ChessTree) -> PositionWithContextTensor {
+        let meta = chessboard.to_mv_metadata_tensor(color_to_play, tree.total_move_count);
         let mut mvs: Array<PositionTensor, 8> = Array::new();
-        mvs.push(self.chessboard.to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
+        mvs.push(chessboard.to_mv_tensor(color_to_play, tree.get_repetition_count(&chessboard)));
         let mut history_count: usize = 7;
-        let mut cur = tree.expanded_arena.get(self.parent).unwrap();
+        let mut cur = tree.expanded_arena.get(parent.index).unwrap();
         while history_count != 0 && !cur.is_root() {
-            mvs.push(cur.chessboard.to_mv_tensor(cur.color_to_play, tree.get_repetition_count(&self.chessboard)));
+            mvs.push(cur.chessboard.to_mv_tensor(cur.color_to_play, tree.get_repetition_count(&chessboard)));
             cur = &cur.get_parent(tree);
             history_count -= 1;
         }
         for i in 0..std::cmp::min(history_count, tree.history.len()) {
-            mvs.push(tree.history[tree.history.len() - 1 - i].to_mv_tensor(self.color_to_play, tree.get_repetition_count(&self.chessboard)));
+            mvs.push(tree.history[tree.history.len() - 1 - i].to_mv_tensor(color_to_play, tree.get_repetition_count(&chessboard)));
             history_count -= 1;
         }
         for _ in 0..history_count {
@@ -222,15 +221,15 @@ impl ChessTree {
         self.rt_handle.block_on(future)
     }
 
-    pub fn new_with_inference(exploration: f64, rt: tokio::runtime::Runtime) -> ChessTree {
+    pub fn new_with_inference(exploration: f64, rt: tokio::runtime::Handle) -> ChessTree {
         let mut me = ChessTree {
             expanded_arena: Arena::new(),
             deferred_arena: Arena::new(),
             history: Vec::new(),
             total_move_count: 0,
-            rt_handle: rt.handle().clone(),
+            rt_handle: rt.clone(),
             exploration,
-            inference_client: Arc::from(InferenceClient::new(&INFERENCE_BUFFER, rt.handle().clone())),
+            inference_client: InferenceClient::new(&INFERENCE_BUFFER, rt.clone()),
         };
 
         let root_ind = DeferredPositionNode::new_game_root(&mut me);

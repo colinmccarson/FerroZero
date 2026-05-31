@@ -39,7 +39,7 @@ fn map_sq_to_8x8_plane_idx(sq: u64) -> (i32, i32) {
 pub struct PositionPrior(tch::Tensor);
 
 impl PositionPrior {
-    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 73];
+    pub const EXPECTED_SHAPE: [i64; 3] = [8, 8, 73];
 
     pub fn new() -> Self {
         Self(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
@@ -87,6 +87,12 @@ impl Clone for PositionPrior {
     }
 }
 
+impl Clone for PositionTensor {
+    fn clone (&self) -> Self {
+        Self(self.0.copy())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PositionInferenceResult {
     priors: PositionPrior,
@@ -112,14 +118,14 @@ impl PositionInferenceResult {
 pub struct PlaneMaskTensor(tch::Tensor);
 
 impl PlaneMaskTensor {
-    const EXPECTED_SHAPE: [i64; 2] = [8, 8];
+    pub const EXPECTED_SHAPE: [i64; 2] = [8, 8];
 
     pub fn from_bitboard(board: u64) -> PlaneMaskTensor {
         let mut bits = [0i32; 64];
         for i in 0..64 {
             bits[i] = ((board >> i) as i32) & 1i32;
         }
-        let mask: tch::Tensor = tch::Tensor::from_slice(&bits).view((8, 8)).flip(0).flip(1).to_kind(tch::Kind::Half);
+        let mask: tch::Tensor = tch::Tensor::from_slice(&bits).view((8, 8)).flip(0).flip(1).to_kind(tch::Kind::Bool);
         Self(mask)
     }
 
@@ -134,7 +140,7 @@ impl Default for PlaneMaskTensor {
 pub struct PositionMetadataTensor(tch::Tensor);
 
 impl PositionMetadataTensor {
-    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 7];
+    pub const EXPECTED_SHAPE: [i64; 3] = [8, 8, 7];
 
     pub fn new_zeros() -> Self {
         PositionMetadataTensor(tch::Tensor::zeros(&Self::EXPECTED_SHAPE, (tch::Kind::Half, tch::Device::Cpu)))
@@ -167,7 +173,7 @@ impl PositionMetadataTensor {
 pub struct PositionTensor(tch::Tensor);
 
 impl PositionTensor {
-    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 14];
+    pub const EXPECTED_SHAPE: [i64; 3] = [8, 8, 14];
 
     pub fn set_plane_with_mask(&mut self, plane_index: usize, mask: &PlaneMaskTensor, value: f64) {
         let _ = self.0.i((.., .., plane_index as i64)).masked_fill_(&mask.0, value);
@@ -198,7 +204,7 @@ impl Borrow<tch::Tensor> for PositionTensor {
 pub struct PositionWithContextTensor(tch::Tensor);
 
 impl PositionWithContextTensor {
-    const EXPECTED_SHAPE: [i64; 3] = [8, 8, 119];
+    pub const EXPECTED_SHAPE: [i64; 3] = [8, 8, 119];
 
     pub fn new(mvs: Array<PositionTensor, 8>, meta: PositionMetadataTensor) -> Self {
         let all_mvs = tch::Tensor::cat(mvs.as_raw_ref(), 2);

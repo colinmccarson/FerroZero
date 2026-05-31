@@ -14,6 +14,15 @@ impl<T, const N: usize> Array<T, N> {
         let arr: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
         Self { arr, len: 0 }
     }
+    
+    pub fn new_with_default(default: T) -> Self where T: Clone {
+        let arr: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut me = Self { arr, len: 0 };
+        for _ in 0..N {
+            me.push(default.clone());
+        }
+        me
+    }
 
     pub fn push(&mut self, item: T) {
         self.arr[self.len].write(item);

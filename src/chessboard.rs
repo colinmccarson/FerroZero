@@ -831,6 +831,9 @@ impl Chessboard { // TODO zobrist hashing
         let mv_tens = self.to_mv_tensor(Colors::WHITE, 0);
         let mut mv_arr: Array<PositionTensor, 8> = Array::new();
         mv_arr.push(mv_tens);
+        for _ in 0..7 {
+            mv_arr.push(PositionTensor::new_zeros());
+        }
         PositionWithContextTensor::new(mv_arr, meta_tens)
     }
 }
